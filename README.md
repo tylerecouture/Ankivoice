@@ -1,6 +1,6 @@
 # AnkiVoice
 
-[![CI](https://github.com/tylerecouture/handsfree-ankidroid-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/tylerecouture/handsfree-ankidroid-plugin/actions/workflows/ci.yml)
+[![CI](https://github.com/tylerecouture/Ankivoice/actions/workflows/ci.yml/badge.svg)](https://github.com/tylerecouture/Ankivoice/actions/workflows/ci.yml)
 
 Hands-free plugin for **AnkiDroid**. It reads each card aloud, listens for
 your voice, and lets you drive a whole review session without touching the phone:
@@ -24,7 +24,7 @@ separate app**. It runs entirely inside AnkiDroid's built-in JavaScript API.
 
 ## Download
 
-Every version is published as a [GitHub release](https://github.com/tylerecouture/handsfree-ankidroid-plugin/releases/latest),
+Every version is published as a [GitHub release](https://github.com/tylerecouture/Ankivoice/releases/latest),
 with two files attached:
 
 | File | For |

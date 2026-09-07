@@ -15,6 +15,7 @@ on:
       - "CHANGELOG.md"
       - "demo/**"
       - ".github/workflows/release.yml"
+      - "tools/**"
   workflow_dispatch:
 
 permissions:
