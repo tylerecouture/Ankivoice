@@ -180,6 +180,48 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     ok("it says so", back.state.spoken.includes("Correct."));
   }
 
+  // ---------- a too-long answer explains itself instead of going quiet ----------
+  {
+    // Voice test OFF on purpose: the explanation must show anyway, or the user
+    // sees the app hear them and do nothing (the v31 report).
+    const { win, state, doc } = await boot("<div>Capital of Mali?</div>",
+      { cfg: { detectAnswer: true, maxAnswerWords: 3, voiceTest: false } });
+    const before = state.micStarts;
+    win.ankiSttResult(heard("the Half Blood Prince"));
+    await wait(60);
+    const bar = doc.getElementById("av-heard");
+    ok("a too-long answer does not reveal", state.showAnswer === 0);
+    ok("the readout is forced visible even with Voice test off", bar.style.display === "block");
+    ok("it says the phrase was too long", bar.textContent.indexOf("too long for an answer") >= 0);
+    ok("it quotes what was heard", bar.textContent.indexOf("the half blood prince") >= 0);
+    ok("it names the limit", bar.textContent.indexOf("max 3") >= 0);
+    ok("and it keeps listening", state.micStarts > before);
+  }
+  {
+    // the same phrase under the v31 default sails through
+    const { win, state } = await boot("<div>Capital of Mali?</div>",
+      { cfg: { detectAnswer: true, maxAnswerWords: 8 } });
+    win.ankiSttResult(heard("the Half Blood Prince"));
+    await wait(60);
+    ok("the v31 default accepts a 4-word answer", state.showAnswer === 1);
+  }
+
+  // ---------- the answer side shows what it thought you said ----------
+  {
+    const { doc } = await boot('<div>Capital of Mali?</div><hr id="answer"><div>Bamako</div>', {
+      onAnswer: true,
+      cfg: { detectAnswer: true, voiceTest: false },
+      storage: {
+        av_qlines: JSON.stringify(["Capital of Mali?"]),
+        av_attempt: JSON.stringify(["timbuktu"]),
+      },
+    });
+    await wait(300);
+    const bar = doc.getElementById("av-heard");
+    ok("the attempt survives the page reload", bar.textContent.indexOf("you said: timbuktu") >= 0);
+    ok("shown even with Voice test off", bar.style.display === "block");
+  }
+
   // ---------- settings panel builds, and chips edit without typing ----------
   {
     const { win, doc, state } = await boot("<div>Q</div>", { storage: { av_heard_recent: JSON.stringify(["harv", "hardt"]) } });
