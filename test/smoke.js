@@ -94,6 +94,9 @@ async function boot(html, opts) {
   const cfg = Object.assign({ thinkDelayQuestionMs: 0, markMicDelayMs: 0, restartGapMs: 0 }, opts.cfg || {});
   win.localStorage.setItem("av_cfg", JSON.stringify(cfg));
   for (const [k, v] of Object.entries(opts.storage || {})) win.localStorage.setItem(k, v);
+  for (const [k, v] of Object.entries(opts.cookies || {})) {
+    win.document.cookie = k + "=" + encodeURIComponent(v) + ";path=/";
+  }
   win.eval(SRC);
   await wait(opts.settle == null ? 400 : opts.settle);
   return { win, state, doc: win.document };
@@ -374,6 +377,40 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     await wait(400);
     ok("a failed tag read never rewrites tags", state.tagWrites.length === 0);
     ok("the card is still graded", state.graded[0] === 3);
+  }
+
+  // ---------- adding vocabulary survives a restart, and says so when empty ----
+  {
+    // localStorage is wiped by the port change on restart; the cookie is not.
+    // Simulate a restart by supplying ONLY the cookie.
+    const { win, doc } = await boot("<div>Q</div>", { cookies: { av_heard: JSON.stringify(["harv"]) } });
+    doc.getElementById("av-gear").dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+    await wait(20);
+    const panel = doc.getElementById("av-settings");
+    const hardRow = [...panel.querySelectorAll("div")]
+      .find((d) => d.firstChild && d.firstChild.textContent === "Extra words \u2192 Hard");
+    const texts = [...hardRow.querySelectorAll("span")].map((c) => c.textContent);
+    ok("heard words survive a restart via the cookie", texts.indexOf("+ harv") >= 0);
+  }
+  {
+    // and with nothing heard, the panel explains where words come from rather
+    // than silently offering no way to add any
+    const { win, doc } = await boot("<div>Q</div>");
+    doc.getElementById("av-gear").dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+    await wait(20);
+    const panel = doc.getElementById("av-settings");
+    const hardRow = [...panel.querySelectorAll("div")]
+      .find((d) => d.firstChild && d.firstChild.textContent === "Extra words \u2192 Hard");
+    ok("the empty state explains itself", hardRow.textContent.indexOf("nothing new heard yet") >= 0);
+    ok("removal chips are still there", [...hardRow.querySelectorAll("span")].some((c) => /^hard\s/.test(c.textContent)));
+  }
+  {
+    // a word heard while reviewing is written to the durable store
+    const { win, state } = await boot("<div>Q</div>");
+    win.ankiSttResult(heard("harvey"));
+    await wait(60);
+    ok("a heard word reaches the cookie", win.document.cookie.indexOf("av_heard") >= 0);
+    ok("...and includes the word", decodeURIComponent(win.document.cookie).indexOf("harvey") >= 0);
   }
 
   // ---------- every setting is reachable without a keyboard ----------

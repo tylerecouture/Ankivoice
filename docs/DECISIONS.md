@@ -172,6 +172,18 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   `av_attempt` for matching; v31 also renders it (`you said: ...`) on arrival.
   That readout is forced visible even with Voice test off, because it exists to
   explain a message the user is hearing regardless.
+- **Anything the user must be able to edit has to outlive the port.** The
+  editable vocabulary was made keyboard-free with chips in v29, but the list of
+  recently-heard words that feeds the "+ word" suggestions was left in
+  `localStorage` - which the random port orphans on every launch, the very
+  problem the settings cookie exists to solve. The result was a panel that could
+  delete vocabulary but not add any after a restart, which read as the chips
+  being pointless. v35 mirrors the heard words to a cookie. The general lesson:
+  if a feature's *input* is stored less durably than the feature itself, the
+  feature quietly stops working.
+- **An empty state that renders nothing is a bug, not a neutral default.** With
+  no suggestions the chip row drew nothing at all, so there was no way to learn
+  that words are added by saying them. It now explains itself.
 - **Cookie budget is finite.** All the word lists share one ~4 KB cookie. Going
   over it used to fail silently and the settings reverted at the next app start
   (because `localStorage` dies with the port); `saveCfg()` now refuses and says

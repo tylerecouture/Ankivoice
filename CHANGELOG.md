@@ -2,7 +2,23 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v34**
+Current: **v35**
+
+## v35
+
+Fixes the settings chips being, in practice, delete-only.
+
+Tapping a word removes it, and words the recognizer recently heard appear as
+`+ word` chips to add. But the recently-heard list lived in `localStorage`, which
+AnkiDroid's changing server port orphans on every launch - the same reason
+settings are kept in a cookie. So after any app restart there were no `+` chips
+at all, and the panel offered no way to add vocabulary, only to delete it. Worse,
+with nothing to suggest it rendered *nothing*, so there was no hint that adding
+words was even possible or where they come from.
+
+Heard words are now mirrored to a cookie and survive restarts, and the empty
+state says "nothing new heard yet - say a word while reviewing and it appears
+here to add."
 
 ## v34
 
