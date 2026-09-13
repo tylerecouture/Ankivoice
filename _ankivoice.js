@@ -3,11 +3,20 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 31
+   VERSION: 32
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v32 - answer matching ignores filler words, so an adequate answer no longer
+           has to be word-perfect: "it's Bamako" and "the capital is Bamako" now
+           match "Bamako". A partial answer is accepted when it covers enough of
+           the answer's content words (new "Accept partial answers" setting,
+           default 60%) - lower it for leniency, 0 to require the whole answer.
+           Speech/recognition language is now set by tapping a language chip,
+           since the on-screen keyboard still does not open in the settings on
+           some devices (confirmed on a Pixel 9); nothing in the panel now needs
+           typing.
      v31 - spoken answers: the word limit that decides whether a phrase counts as
            an answer was 3, so anything longer ("the Half Blood Prince") was
            dropped in silence - it looked like the app heard you and ignored you.
@@ -104,7 +113,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 31;
+  var AV_VERSION = 32;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -117,6 +126,10 @@
     pauseSeconds: 10,           // "pause" command: mic off this long, then resume
     detectAnswer: false,        // question side: also try to recognise a spoken answer (off by default)
     maxAnswerWords: 8,          // longest phrase that still counts as a spoken answer
+    answerCoverage: 60,         // % of the answer's content words a partial answer must cover (0 = off)
+                                //   60 is deliberately cautious: at 50, "Harry Potter" would be accepted
+                                //   for "Harry Potter and the Goblet of Fire" - both cover 2 of 4 content
+                                //   words, and nothing in the text says which half is the answer.
     voiceTest: false,           // diagnostic: show what the recognizer heard, without acting on it
     maxNoMatchTries: 12,        // recognized-but-unmatched replies before auto-pausing (noise guard)
     announceInterval: true,     // speak the next review interval after grading
@@ -321,16 +334,58 @@
     try { s = s.normalize("NFKD").replace(/[\u0300-\u036F]/g, ""); } catch (e) {}
     return s.replace(AV_PUNCT, " ").replace(/\s+/g, " ").trim();
   }
-  // Conservative match: attempt equals an answer line, or is contained (whole
-  // phrase) in a SHORT answer line - avoids false hits inside longer sentences.
-  function answerMatches(attempt, answerLines) {
+  // Filler that carries no answer content, so "it's Bamako" and "Bamako" agree.
+  // ("s" and "t" are here because normalize() turns "it's" into "it s".)
+  var AV_STOPWORDS = {
+    a:1, an:1, and:1, are:1, as:1, at:1, be:1, by:1, did:1, do:1, does:1, for:1,
+    from:1, had:1, has:1, have:1, he:1, her:1, his:1, i:1, in:1, is:1, it:1,
+    its:1, my:1, of:1, on:1, or:1, our:1, s:1, she:1, t:1, that:1, the:1,
+    their:1, them:1, they:1, this:1, to:1, was:1, we:1, were:1, with:1, you:1,
+    your:1
+  };
+  function contentWords(s) {
+    var raw = normalize(s).split(" "), out = [], i;
+    for (i = 0; i < raw.length; i++) if (raw[i] && !AV_STOPWORDS[raw[i]]) out.push(raw[i]);
+    // An answer that is nothing but filler ("the") still has to be matchable.
+    if (!out.length) for (i = 0; i < raw.length; i++) if (raw[i]) out.push(raw[i]);
+    return out;
+  }
+  function hasAll(hay, needles) {
+    for (var i = 0; i < needles.length; i++) {
+      var found = false;
+      for (var j = 0; j < hay.length; j++) if (hay[j] === needles[i]) { found = true; break; }
+      if (!found) return false;
+    }
+    return true;
+  }
+
+  // Matching ignores filler words, so an adequate answer does not have to be
+  // word-perfect. Two tiers:
+  //   - you said at least every content word of the answer -> always accepted
+  //     ("it's Bamako", "the capital is Bamako" for "Bamako")
+  //   - you said only PART of the answer -> accepted when it covers at least
+  //     coveragePct of the answer's content words.
+  // Coverage alone rejects a lone word lifted out of a long descriptive answer:
+  // "Guinea" is 1 of 6 content words in "Flag similar to Guinea and red flipped
+  // darker", i.e. 17%, nowhere near any sane threshold. No separate rule needed.
+  function answerMatches(attempt, answerLines, coveragePct) {
     var a = normalize(attempt);
     if (!a || a.length < 2) return false;
+    var aw = contentWords(attempt);
+    if (!aw.length) return false;
+    var need = (coveragePct == null) ? 50 : coveragePct;
     for (var i = 0; i < answerLines.length; i++) {
       var ln = normalize(answerLines[i]);
       if (!ln) continue;
-      if (ln === a) return true;
-      if (ln.split(" ").length <= 4 && (" " + ln + " ").indexOf(" " + a + " ") >= 0) return true;
+      if (ln === a) return true;                       // word-perfect
+      var lw = contentWords(answerLines[i]);
+      if (!lw.length) continue;
+      if (hasAll(aw, lw)) return true;                 // said the whole answer, plus filler
+      if (need > 0 && hasAll(lw, aw)) {
+        var covered = 0;                               // a fragment of the answer
+        for (var j = 0; j < lw.length; j++) if (hasAll(aw, [lw[j]])) covered++;
+        if (covered * 100 >= lw.length * need) return true;
+      }
     }
     return false;
   }
@@ -338,8 +393,10 @@
   // "bamboo"). Each has to be tested on its own: concatenating them makes a word
   // salad that matches no answer line and blows straight past the word-count gate,
   // which is what made "detect spoken answers" look broken before v29.
-  function anyAnswerMatches(attempts, answerLines) {
-    for (var i = 0; i < attempts.length; i++) if (answerMatches(attempts[i], answerLines)) return true;
+  function anyAnswerMatches(attempts, answerLines, coveragePct) {
+    for (var i = 0; i < attempts.length; i++) {
+      if (answerMatches(attempts[i], answerLines, coveragePct)) return true;
+    }
     return false;
   }
   function isArr(v) { return Object.prototype.toString.call(v) === "[object Array]"; }
@@ -654,7 +711,7 @@
             // The question side's readout died with the page reload, so "Answer not
             // recognized" would otherwise arrive with no clue what was misheard.
             if (attempts.length) showBar("you said: " + attempts.join("   |   "), true);
-            if (CFG.detectAnswer && attempts.length && anyAnswerMatches(attempts, ansLines)) {
+            if (CFG.detectAnswer && attempts.length && anyAnswerMatches(attempts, ansLines, CFG.answerCoverage)) {
               await speak("Correct.");
               if (dead()) return;
               api.ankiAnswerEase3();                              // recognised -> Good, skip grading
@@ -709,6 +766,12 @@
   lsSet("av_ts", String(nowTs));
 
   // ---------------- settings panel (gear on the far right) ----------------
+  // Common BCP-47 tags, offered as chips so a language can be set without typing.
+  var AV_LANGS = [
+    "en-US", "en-GB", "fr-FR", "de-DE", "es-ES", "it-IT", "pt-BR", "nl-NL",
+    "pl-PL", "ru-RU", "sv-SE", "tr-TR", "ja-JP", "ko-KR", "zh-CN", "ar-SA",
+    "hi-IN", "he-IL", "cs-CZ", "el-GR", "id-ID", "vi-VN"
+  ];
   var AV_SETTINGS = [
     { k: "detectAnswer",        label: "Detect spoken answers",       type: "bool" },
     { k: "keepScreenAwake",     label: "Keep screen awake",           type: "bool" },
@@ -717,12 +780,13 @@
     { k: "pauseSeconds",        label: "'Pause' command length",      type: "num", min: 2, max: 60,    step: 1,   unit: "s" },
     { k: "maxListenTries",      label: "Retries before pausing",      type: "num", min: 1, max: 20,    step: 1,   unit: "" },
     { k: "maxAnswerWords",      label: "Max words for answer match",  type: "num", min: 1, max: 20,    step: 1,   unit: "" },
+    { k: "answerCoverage",      label: "Accept partial answers",      type: "num", min: 0, max: 100,   step: 10,  unit: "%" },
     { k: "restartGapMs",        label: "Mic restart gap",             type: "num", min: 0, max: 1000,  step: 50,  unit: "ms" },
     { k: "voiceTest",           label: "Voice test (show heard words)", type: "bool" },
     { k: "announceInterval",    label: "Announce next interval",       type: "bool" },
     { k: "maxNoMatchTries",     label: "Unknown replies before pausing", type: "num", min: 2, max: 40, step: 1, unit: "" },
-    { k: "ttsLang",  label: "Speech language", type: "text", ph: "e.g. en-US, fr-FR, de-DE" },
-    { k: "sttLang",  label: "Recognition language", type: "text", ph: "e.g. en-US (ignored if unsupported)" },
+    { k: "ttsLang",  label: "Speech language", type: "text", ph: "e.g. en-US, fr-FR, de-DE", opts: AV_LANGS },
+    { k: "sttLang",  label: "Recognition language", type: "text", ph: "e.g. en-US (ignored if unsupported)", opts: AV_LANGS },
     { k: "words_answer", label: "Extra words \u2192 Answer", type: "words" },
     { k: "words_again",  label: "Extra words \u2192 Again",  type: "words" },
     { k: "words_hard",   label: "Extra words \u2192 Hard",   type: "words" },
@@ -837,9 +901,37 @@
         inp.addEventListener("touchend", function (e) { e.stopPropagation(); focusIt(); });
         inp.addEventListener("touchstart", function (e) { e.stopPropagation(); }, { passive: true });
 
-        if (s.type === "text") {                       // plain field, no vocabulary chips
-          var pT = (function (el, key) { return function () { el.value = CFG[key] || ""; }; })(inp, s.k);
-          refreshers.push(pT); row.appendChild(inp); box.appendChild(row); return;
+        if (s.type === "text") {
+          // Tappable presets, because the on-screen keyboard does not reliably
+          // open for inputs in AnkiDroid's reviewer WebView - confirmed still
+          // broken on a Pixel 9 even after the user-select fix. The field stays
+          // for devices where typing works, and for values not in the list.
+          var opts = s.opts || [];
+          var chipsT = document.createElement("div");
+          chipsT.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
+          var renderOpts = (function (key) {
+            return function () {
+              chipsT.textContent = "";
+              var cur = String(CFG[key] || "");
+              for (var oi = 0; oi < opts.length; oi++) {
+                (function (val) {
+                  var on = (val.toLowerCase() === cur.toLowerCase());
+                  var c = mkChip(val, on ? "background:#1565c0;color:#fff;" : "background:#37474f;color:#fff;");
+                  c.onclick = function (e) {
+                    e.stopPropagation();
+                    CFG[key] = val; saveCfg(); renderOpts(); inp.value = val;
+                  };
+                  chipsT.appendChild(c);
+                })(opts[oi]);
+              }
+            };
+          })(s.k);
+          inp.__chips = renderOpts;
+          var pT = (function (el, key) { return function () { el.value = CFG[key] || ""; renderOpts(); }; })(inp, s.k);
+          renderOpts();
+          refreshers.push(pT);
+          if (opts.length) row.appendChild(chipsT);
+          row.appendChild(inp); box.appendChild(row); return;
         }
 
         var chipsOn = document.createElement("div");

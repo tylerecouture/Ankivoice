@@ -122,6 +122,9 @@ Every trigger word above is **editable in Settings** (see below).
     "next review in four days" after each card).
   - **Unknown replies before pausing** — how much unrecognized speech to tolerate
     before the mic parks itself, so background noise can't loop it forever.
+  - **Accept partial answers** — how much of the answer a partial reply must
+    cover to count (default 60%; 0 requires the whole answer). Filler words are
+    always ignored, so "it's Bamako" matches "Bamako" regardless.
 - Settings are **persistent** across app restarts (stored in a cookie — see the
   FAQ for why not `localStorage`).
 

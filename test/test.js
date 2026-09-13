@@ -46,11 +46,14 @@ let CFG = {};
 eval(grabVar("AV_BLOCK"));
 eval(grabVar("AV_UNITS"));
 eval(grabVar("AV_PUNCT"));
+eval(grabVar("AV_STOPWORDS"));
 eval(grab("textWithBreaks"));
 eval(grab("extractLines"));
 eval(grab("speechJoin"));
 eval(grab("subtractLines"));
 eval(grab("normalize"));
+eval(grab("contentWords"));
+eval(grab("hasAll"));
 eval(grab("answerMatches"));
 eval(grab("anyAnswerMatches"));
 eval(grab("answerAttempts"));
@@ -132,12 +135,58 @@ ok("answerMatches wrong", answerMatches("mali", ["Bamako"]) === false);
 ok("answerMatches not-in-long-sentence", answerMatches("guinea", ["Flag similar to Guinea and red flipped darker"]) === false);
 ok("answerMatches accent-insensitive", answerMatches("cafe", ["Café"]) === true);
 
+// Filler words are ignored, so an adequate answer need not be word-perfect.
+eq("contentWords drops filler", contentWords("the capital is Bamako"), ["capital", "bamako"]);
+eq("contentWords survives an all-filler answer", contentWords("the"), ["the"]);
+ok("hasAll is a subset test", hasAll(["a", "b", "c"], ["c", "a"]) === true);
+ok("hasAll rejects a missing word", hasAll(["a", "b"], ["a", "z"]) === false);
+
+// Tier 1: you said at least every content word of the answer. Always accepted,
+// at any coverage setting, because nothing is missing.
+ok("filler added around the answer", answerMatches("it's Bamako", ["Bamako"]) === true);
+ok("a whole sentence containing the answer", answerMatches("the capital is Bamako", ["Bamako"]) === true);
+ok("leading article on the card", answerMatches("mitochondria", ["The mitochondria"]) === true);
+ok("tier 1 ignores the coverage setting", answerMatches("it's Bamako", ["Bamako"], 0) === true);
+
+// Tier 2: only PART of the answer, gated on how much of it you covered.
+(() => {
+  const book = ["Harry Potter and the Goblet of Fire"];   // 4 content words
+  ok("half the title is rejected at the cautious default", answerMatches("goblet of fire", book, 60) === false);
+  ok("...and accepted when lowered to 50", answerMatches("goblet of fire", book, 50) === true);
+  // the reason the default is cautious: nothing distinguishes these two halves
+  ok("the WRONG half is equally accepted at 50", answerMatches("harry potter", book, 50) === true);
+  ok("...and equally rejected at 60", answerMatches("harry potter", book, 60) === false);
+  ok("partial matching off entirely", answerMatches("goblet of fire", book, 0) === false);
+})();
+eq("two of three content words clears 60%",
+   answerMatches("united states", ["The United States of America"], 60), true);
+
+// Coverage alone keeps a lone word out of a long descriptive answer: 1 of 6
+// content words is 17%, below any sane threshold, so no extra minimum-length
+// rule is needed. Set the threshold below 17 and it does match - which is
+// exactly what the number is for.
+(() => {
+  const flag = ["Flag similar to Guinea and red flipped darker"];
+  ok("a lone word in a long answer is rejected at the default", answerMatches("guinea", flag, 60) === false);
+  ok("...and at a lenient 50", answerMatches("guinea", flag, 50) === false);
+  ok("...and at 20, just above its 17%", answerMatches("guinea", flag, 20) === false);
+  ok("...but 10 lets it through, as the setting promises", answerMatches("guinea", flag, 10) === true);
+})();
+
 // The recognizer returns competing hypotheses. Each must be tested on its own:
 // concatenating them (pre-v29) produced a phrase that matched nothing.
 (() => {
   const hyps = ["bamboo", "bamako", "bam ako"];
   ok("anyAnswerMatches picks the right hypothesis", anyAnswerMatches(hyps, ["Bamako"]) === true);
-  ok("joined hypotheses match nothing (the v29 bug)", answerMatches(hyps.join(" "), ["Bamako"]) === false);
+})();
+// Joining the hypotheses is still wrong, though the v31 matcher changed HOW.
+// It used to make a phrase that matched nothing; now it pools every guess's
+// words together, so the pool can satisfy an answer that no single guess does.
+(() => {
+  const answer = ["Red Flag"];
+  const hyps = ["red", "flag balloon"];
+  ok("no single hypothesis is good enough", anyAnswerMatches(hyps, answer, 60) === false);
+  ok("...but their pooled words would falsely match", answerMatches(hyps.join(" "), answer, 60) === true);
   ok("anyAnswerMatches stays wrong when it should", anyAnswerMatches(["mali", "molly"], ["Bamako"]) === false);
 })();
 

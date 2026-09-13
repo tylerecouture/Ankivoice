@@ -2,7 +2,33 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v31**
+Current: **v32**
+
+## v32
+
+Answer matching that tolerates normal speech, and a settings panel that needs no
+keyboard at all.
+
+- **Filler words are ignored.** The matcher used to demand the answer verbatim,
+  or contained in a line of four words or less. So "it's Bamako" and "the capital
+  is Bamako" both failed against "Bamako", as did "mitochondria" against "The
+  mitochondria". Matching now compares content words, ignoring articles,
+  prepositions and the like. Saying at least the whole answer, with any amount of
+  padding around it, always counts.
+- **Partial answers are configurable.** Saying only part of the answer is
+  accepted when it covers at least *Accept partial answers* percent of the
+  answer's content words (default **60%**, 0 to turn it off). The default is
+  deliberately cautious: at 50%, "Harry Potter" would be accepted for "Harry
+  Potter and the Goblet of Fire", because it covers two of four content words
+  exactly like the correct "Goblet of Fire" does, and nothing in the text says
+  which half is the answer. Lower it if you would rather be let off lightly. A
+  false "Correct" silently marks a card Good, which is why the default errs the
+  other way.
+- **Nothing in the settings needs typing now.** The speech and recognition
+  language fields were the last hold-outs; they are now tappable chips of common
+  language tags. The keyboard still does not open for text inputs in AnkiDroid's
+  reviewer WebView on at least one device (a Pixel 9) even with the v29
+  `user-select` fix, so the panel no longer depends on it anywhere.
 
 ## v31
 

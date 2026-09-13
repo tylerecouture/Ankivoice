@@ -263,6 +263,32 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     ok("closing the panel reopens the mic", state.micStarts >= 2);
   }
 
+  // ---------- every setting is reachable without a keyboard ----------
+  {
+    const { win, doc } = await boot("<div>Q</div>", { cfg: { ttsLang: "en-US" } });
+    doc.getElementById("av-gear").dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+    await wait(20);
+    const panel = doc.getElementById("av-settings");
+    const rowFor = (label) => [...panel.querySelectorAll("div")]
+      .find((d) => d.firstChild && d.firstChild.textContent === label);
+
+    const lang = rowFor("Speech language");
+    ok("the language row exists", !!lang);
+    const chip = (row, text) => [...row.querySelectorAll("span")].find((c) => c.textContent === text);
+    ok("languages are offered as chips", !!chip(lang, "fr-FR"));
+    chip(lang, "fr-FR").dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+    await wait(20);
+    ok("tapping a language sets it", JSON.parse(win.localStorage.getItem("av_cfg")).ttsLang === "fr-FR");
+    ok("the field follows along", lang.querySelector("input").value === "fr-FR");
+
+    // nothing in the panel should require typing
+    const typed = [...panel.querySelectorAll("input")].filter((i) => {
+      const r = i.closest ? i.closest("div") : null;
+      return r && ![...r.querySelectorAll("span")].length;
+    });
+    ok("no setting is text-entry only", typed.length === 0);
+  }
+
   // ---------- an oversized word list is reported, not silently dropped ----------
   {
     const big = new Array(700).fill("wordy").join(", ");
