@@ -2,7 +2,20 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v33**
+Current: **v34**
+
+## v34
+
+The first card of a session used to read out the entire command list before the
+question. Once you know the commands that is a long thing to sit through every
+session, so it now just says:
+
+> "AnkiVoice is on. Say help, to list the voice commands available."
+
+The greeting comes before the question rather than after it, since it announces
+the session rather than commenting on the card. **Help** still reads the full
+list whenever you ask for it, and the answer side still offers the short grading
+cue ("Mark it: again, hard, good, or easy") the first time each session.
 
 ## v33
 

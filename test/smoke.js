@@ -110,9 +110,16 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     ok("the bar is injected", !!doc.getElementById("av-root"));
     ok("the gear is injected", !!doc.getElementById("av-gear"));
     ok("the question was read", state.spoken.join(" ").includes("Capital of Mali"));
-    ok("the command list was read on the first card", state.spoken.join(" ").includes("Voice commands"));
+    ok("the first card is greeted, not lectured", state.spoken.join(" ").includes("AnkiVoice is on"));
+    ok("the full command list is NOT read out unprompted", !state.spoken.join(" ").includes("Voice commands"));
+    ok("the greeting comes before the question", /AnkiVoice is on[\s\S]*Capital of Mali/.test(state.spoken.join(" ")));
     ok("the bar does not cover the card", /\d+px/.test(doc.body.style.paddingBottom));
     ok("the mic opened after the question", state.micStarts >= 1);
+
+    // "help" still reads the full list on demand
+    win.ankiSttResult(heard("help"));
+    await wait(300);
+    ok("help still lists every command", state.spoken.join(" ").includes("Voice commands"));
 
     // "answer" reveals, whichever hypothesis carries it
     win.ankiSttResult(heard("and sir", "answer"));

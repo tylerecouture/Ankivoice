@@ -5,7 +5,8 @@
 Hands-free plugin for **AnkiDroid**. It reads each card aloud, listens for
 your voice, and lets you drive a whole review session without touching the phone:
 
-1. The **question** is read aloud.
+1. The **question** is read aloud. (On the first card of a session it greets you
+   first: *"AnkiVoice is on. Say help, to list the voice commands available."*)
 2. You say **"answer"** → the answer is read aloud.
 3. You say a grade: **again / hard / good / easy** and it schedules the card, announces the next interval, and moves on.
 
