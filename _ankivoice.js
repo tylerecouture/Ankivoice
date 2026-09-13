@@ -3,11 +3,19 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 30
+   VERSION: 31
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v31 - spoken answers: the word limit that decides whether a phrase counts as
+           an answer was 3, so anything longer ("the Half Blood Prince") was
+           dropped in silence - it looked like the app heard you and ignored you.
+           The default is now 8 (adjustable to 20), and a phrase dropped purely
+           for length now says so on screen instead of nothing. On the answer
+           side the bar now shows "you said: ...", because the question side's
+           readout is destroyed by the page reload - so "Answer not recognized"
+           no longer arrives with no clue what was misheard.
      v30 - the running version is now visible on the phone: the bar reads
            "AnkiVoice v30" before a card starts, the off state shows it, and the
            settings panel header carries it. Without this there was no way to
@@ -96,7 +104,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 30;
+  var AV_VERSION = 31;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -108,7 +116,7 @@
     keepScreenAwake: true,      // hold a screen wake lock while actively reviewing
     pauseSeconds: 10,           // "pause" command: mic off this long, then resume
     detectAnswer: false,        // question side: also try to recognise a spoken answer (off by default)
-    maxAnswerWords: 3,          // only a phrase this short counts as an answer attempt
+    maxAnswerWords: 8,          // longest phrase that still counts as a spoken answer
     voiceTest: false,           // diagnostic: show what the recognizer heard, without acting on it
     maxNoMatchTries: 12,        // recognized-but-unmatched replies before auto-pausing (noise guard)
     announceInterval: true,     // speak the next review interval after grading
@@ -156,11 +164,16 @@
   heardBar.style.cssText = "position:fixed;left:0;right:0;bottom:56px;padding:9px 12px;font-size:15px;" +
     "font-family:monospace;text-align:center;z-index:10000;background:rgba(150,110,0,.96);color:#fff;display:none;";
   (document.body || document.documentElement).appendChild(heardBar);
-  function showHeard(txt) {
-    if (!CFG.voiceTest) { heardBar.style.display = "none"; return; }
+  // Normally the readout is a Voice-test-only diagnostic. force === true shows it
+  // regardless, for messages the user would otherwise never see - notably what the
+  // recognizer heard on the QUESTION side, which is gone by the time the answer
+  // side renders (every card side is a full page reload).
+  function showBar(txt, force) {
+    if (!force && !CFG.voiceTest) { heardBar.style.display = "none"; return; }
     heardBar.style.display = "block";
     if (txt != null) heardBar.textContent = txt;
   }
+  function showHeard(txt) { showBar(txt, false); }
 
   // The bar is position:fixed, so without this it sits on top of the last line of
   // a full-height card. Reserve its height at the bottom of the document instead.
@@ -330,6 +343,20 @@
     return false;
   }
   function isArr(v) { return Object.prototype.toString.call(v) === "[object Array]"; }
+  // Split the recognizer's hypotheses into those short enough to count as a spoken
+  // answer, and the longest one rejected purely for length - so the UI can say why
+  // nothing happened instead of silently listening again.
+  function answerAttempts(hyps, maxWords) {
+    var out = { attempts: [], tooLongText: "", tooLongWords: 0 };
+    for (var i = 0; i < hyps.length; i++) {
+      var norm = normalize(hyps[i]);
+      if (!norm) continue;
+      var wc = norm.split(" ").length;
+      if (wc <= maxWords) out.attempts.push(norm);
+      else if (wc > out.tooLongWords) { out.tooLongWords = wc; out.tooLongText = norm; }
+    }
+    return out;
+  }
   // Recently heard words, kept so the settings panel can offer one-tap "add this
   // mis-hear" chips - typing into the panel is unreliable in AnkiDroid's WebView.
   function recentHeard() {
@@ -551,19 +578,19 @@
         if (CFG.detectAnswer) {
           // Gate on EACH hypothesis, not on all of them joined: five alternatives
           // for a one-word answer used to count as five words and fail the gate.
-          var attempts = [];
-          for (var hi = 0; hi < hyps.length; hi++) {
-            var norm = normalize(hyps[hi]);
-            if (!norm) continue;
-            var wc = norm.split(" ").length;
-            if (wc >= 1 && wc <= CFG.maxAnswerWords) attempts.push(norm);
-          }
-          if (attempts.length) {
+          var att = answerAttempts(hyps, CFG.maxAnswerWords);
+          if (att.attempts.length) {
             noMatch = 0;
-            lsSet("av_attempt", JSON.stringify(attempts));
+            lsSet("av_attempt", JSON.stringify(att.attempts));
             S("Checking your answer\u2026");
             api.ankiShowAnswer();
             return;
+          }
+          if (att.tooLongWords) {
+            // Heard clearly, dropped only for length. Saying so beats appearing to
+            // ignore the user, which is what this used to do.
+            showBar("too long for an answer: \"" + att.tooLongText + "\" (" +
+                    att.tooLongWords + " words, max " + CFG.maxAnswerWords + ")", true);
           }
         }
       } else {
@@ -624,6 +651,9 @@
           } else {
             var attempts = readAttempts();
             lsSet("av_attempt", "");
+            // The question side's readout died with the page reload, so "Answer not
+            // recognized" would otherwise arrive with no clue what was misheard.
+            if (attempts.length) showBar("you said: " + attempts.join("   |   "), true);
             if (CFG.detectAnswer && attempts.length && anyAnswerMatches(attempts, ansLines)) {
               await speak("Correct.");
               if (dead()) return;
@@ -686,7 +716,7 @@
     { k: "markMicDelayMs",      label: "Pause before grade mic",      type: "num", min: 0, max: 3000,  step: 50,  unit: "ms" },
     { k: "pauseSeconds",        label: "'Pause' command length",      type: "num", min: 2, max: 60,    step: 1,   unit: "s" },
     { k: "maxListenTries",      label: "Retries before pausing",      type: "num", min: 1, max: 20,    step: 1,   unit: "" },
-    { k: "maxAnswerWords",      label: "Max words for answer match",  type: "num", min: 1, max: 6,     step: 1,   unit: "" },
+    { k: "maxAnswerWords",      label: "Max words for answer match",  type: "num", min: 1, max: 20,    step: 1,   unit: "" },
     { k: "restartGapMs",        label: "Mic restart gap",             type: "num", min: 0, max: 1000,  step: 50,  unit: "ms" },
     { k: "voiceTest",           label: "Voice test (show heard words)", type: "bool" },
     { k: "announceInterval",    label: "Announce next interval",       type: "bool" },

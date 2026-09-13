@@ -53,6 +53,7 @@ eval(grab("subtractLines"));
 eval(grab("normalize"));
 eval(grab("answerMatches"));
 eval(grab("anyAnswerMatches"));
+eval(grab("answerAttempts"));
 eval(grab("expandIvl"));
 eval(grab("unwrapValue"));
 eval(grab("said"));
@@ -138,6 +139,38 @@ ok("answerMatches accent-insensitive", answerMatches("cafe", ["Café"]) === true
   ok("anyAnswerMatches picks the right hypothesis", anyAnswerMatches(hyps, ["Bamako"]) === true);
   ok("joined hypotheses match nothing (the v29 bug)", answerMatches(hyps.join(" "), ["Bamako"]) === false);
   ok("anyAnswerMatches stays wrong when it should", anyAnswerMatches(["mali", "molly"], ["Bamako"]) === false);
+})();
+
+// ---------------- the spoken-answer length gate ----------------
+// The v31 report: "the Half Blood Prince" is four words, the limit defaulted to
+// three, so it was dropped with no feedback at all.
+(() => {
+  const heard = ["the Half Blood Prince"];
+  const tight = answerAttempts(heard, 3);
+  eq("a 4-word answer fails a limit of 3", tight.attempts, []);
+  eq("...and is reported as too long", tight.tooLongWords, 4);
+  eq("...with the text, so the UI can show it", tight.tooLongText, "the half blood prince");
+
+  const roomy = answerAttempts(heard, 8);
+  eq("the same answer passes the v31 default of 8", roomy.attempts, ["the half blood prince"]);
+  eq("nothing is reported as too long", roomy.tooLongWords, 0);
+})();
+(() => {
+  // per hypothesis, so a long alternative never suppresses a short one
+  const mixed = answerAttempts(["bamako", "bam ako well now then please"], 3);
+  eq("short hypotheses survive a long sibling", mixed.attempts, ["bamako"]);
+  eq("the long sibling is still reported", mixed.tooLongWords, 6);
+})();
+eq("empty hypotheses are ignored", answerAttempts(["", "   "], 8).attempts, []);
+eq("punctuation does not inflate the word count",
+   answerAttempts(["The Goblet of Fire!"], 4).attempts, ["the goblet of fire"]);
+(() => {
+  // the shipped default must actually clear a realistic long answer
+  const def = /maxAnswerWords:\s*(\d+)/.exec(src);
+  ok("maxAnswerWords has a default", !!def);
+  const title = "Harry Potter and the Goblet of Fire";   // 7 words
+  ok("the default clears a 7-word title",
+     answerAttempts([title], Number(def[1])).attempts.length === 1);
 })();
 
 // ---------------- editable command vocab ----------------

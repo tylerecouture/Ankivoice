@@ -2,7 +2,25 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v30**
+Current: **v31**
+
+## v31
+
+Fixes for "detect spoken answers", both reported from the device.
+
+- **A spoken answer longer than 3 words was dropped in silence.** `maxAnswerWords`
+  gated how long a phrase could be and still count as an answer attempt; anything
+  longer failed the gate, matched no command, and simply reopened the microphone.
+  With Voice test on you could watch it hear "the Half Blood Prince" and then do
+  nothing, with no indication why. The default is now **8** words (adjustable up
+  to 20), which fits real answers, and a phrase rejected *purely* for length now
+  says so in the readout instead of vanishing.
+- **You could not see what it thought you said.** Every card side is a full page
+  reload, so the question side's readout is gone by the time the answer renders -
+  meaning "Answer not recognized" arrived with no clue what was misheard. The
+  answer side now shows `you said: ...`, carried across the reload, and shows it
+  whether or not Voice test is on, since that message is what explains the
+  spoken one.
 
 ## v30
 
