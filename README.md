@@ -141,6 +141,111 @@ this yourself without editing the script:
    remove it.)
 4. Turn Voice test off. That word now works for your voice.
 
+### What counts as a right answer
+
+Only relevant when **Detect spoken answers** is on. Two rules decide it:
+
+1. **Say at least the whole answer and you are always right.** Filler words are
+   ignored, so articles, "it's", "the answer is" and so on make no difference.
+   This never depends on any setting.
+2. **Say only part of the answer** and it depends on how much of it you covered,
+   against the **Accept partial answers** percentage (default 60%). A partial
+   answer must also contain *no* words that aren't in the answer - so a wrong
+   guess can't sneak through on coverage alone ("Pierre Curie" is rejected for
+   "Marie Curie" even though it covers half of it).
+
+Filler words don't count toward any of this. "The United States of America" is
+three *content* words: united, states, america.
+
+<!-- ANSWER-CASES:START (generated from the matcher; test/test.js checks these rows) -->
+| The card's answer | You say | Content words you covered | Accepted at 60% (default) | at 50% |
+|---|---|---|---|---|
+| **Bamako**<br>(1 content word) | Bamako | all 1 (+ extra) | yes | yes |
+|  | bamako | all 1 (+ extra) | yes | yes |
+|  | it's Bamako | all 1 (+ extra) | yes | yes |
+|  | the capital is Bamako | all 1 (+ extra) | yes | yes |
+|  | Mali | 0 of 1 | no | no |
+| **Marie Curie**<br>(2 content words) | Marie Curie | all 2 (+ extra) | yes | yes |
+|  | it was Marie Curie | all 2 (+ extra) | yes | yes |
+|  | Curie | 1 of 2 | no | yes |
+|  | Marie | 1 of 2 | no | yes |
+|  | Pierre Curie | 1 of 2 | no | no |
+| **The United States of America**<br>(3 content words) | the United States of America | all 3 (+ extra) | yes | yes |
+|  | United States of America | all 3 (+ extra) | yes | yes |
+|  | United States | 2 of 3 | yes | yes |
+|  | America | 1 of 3 | no | no |
+|  | United | 1 of 3 | no | no |
+| **Harry Potter and the Goblet of Fire**<br>(4 content words) | Harry Potter and the Goblet of Fire | all 4 (+ extra) | yes | yes |
+|  | the Goblet of Fire | 2 of 4 | no | yes |
+|  | Goblet of Fire | 2 of 4 | no | yes |
+|  | Harry Potter | 2 of 4 | no | yes |
+|  | Goblet | 1 of 4 | no | no |
+|  | the Half Blood Prince | 0 of 4 | no | no |
+| **Flag similar to Guinea and red flipped darker**<br>(6 content words) | flag similar to Guinea and red flipped darker | all 6 (+ extra) | yes | yes |
+|  | Guinea red flipped darker | 4 of 6 | yes | yes |
+|  | Guinea red | 2 of 6 | no | no |
+|  | Guinea | 1 of 6 | no | no |
+<!-- ANSWER-CASES:END -->
+
+How much you have to say, by answer length:
+
+<!-- ANSWER-QUICK:START -->
+| Content words in the answer | Must say at 60% (default) | at 50% | at 80% |
+|---|---|---|---|
+| 1 | all 1 | all 1 | all 1 |
+| 2 | all 2 | 1 of 2 | all 2 |
+| 3 | 2 of 3 | 2 of 3 | all 3 |
+| 4 | 3 of 4 | 2 of 4 | all 4 |
+| 5 | 3 of 5 | 3 of 5 | 4 of 5 |
+| 6 | 4 of 6 | 3 of 6 | 5 of 6 |
+| 7 | 5 of 7 | 4 of 7 | 6 of 7 |
+| 8 | 5 of 8 | 4 of 8 | 7 of 8 |
+<!-- ANSWER-QUICK:END -->
+
+Two things fall out of that worth knowing:
+
+- **A one- or two-word answer effectively has to be said in full** at the default
+  60%, because half of two words is 50%. If you want "Curie" to pass for "Marie
+  Curie", set the percentage to 50.
+- **50% is not simply "more forgiving"** - it is the point where half an answer
+  counts, and half of "Harry Potter and the Goblet of Fire" is "Harry Potter"
+  just as much as it is "Goblet of Fire". The card doesn't say which half is the
+  point, so neither can the plugin. Set it knowing that a wrong half will be
+  marked Good.
+
+### Teaching it an answer
+
+**Off by default.** Turn on **Remember answers (adds tags)** in settings to use it.
+
+When you say something the plugin doesn't accept, it reads the answer out as
+usual. If you then grade the card **Hard, Good or Easy** — i.e. you decided you
+were actually right — it asks:
+
+> "Should I remember, *the goblet of fire*, as a right answer for this card? Say
+> yes, or no."
+
+Say **yes** and that phrase is accepted for this card from then on. Say **no**,
+say nothing, or say anything it doesn't understand, and it just grades the card
+and moves on. Grading **Again** never asks, since that means you got it wrong.
+
+**Where it is stored, and what that means for you:**
+
+- The phrase is saved as a **tag on the note**, like
+  `AnkiVoice::ok::the-goblet-of-fire`. Tags are the only writable, durable store
+  the AnkiDroid JS API offers — there is no way to edit a note's fields from card
+  JavaScript, so this can't be tucked away invisibly inside the card.
+- **These tags are visible** in the card browser and the tag sidebar, on every
+  device, and they **sync**. That is the price of it working across your devices
+  and surviving a reinstall, and it's why the feature is off until you ask for it.
+- To undo, delete the tag in the browser like any other tag. Searching
+  `tag:AnkiVoice::ok::*` finds every phrase it has learned.
+- Existing tags are never disturbed. The plugin adds a tag; it never rewrites the
+  note's tag list unless AnkiDroid offers no additive call, and even then it
+  refuses to write at all unless it first read the existing tags cleanly.
+
+Remembered phrases are matched with exactly the same rules as the card's own
+answer, including **Accept partial answers**.
+
 ## Development
 
 - The deployable artifact is the single file `_ankivoice.js`. The version lives

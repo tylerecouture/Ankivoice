@@ -141,6 +141,21 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   judgement the code pretends to make. The asymmetry matters: a false "Correct"
   silently marks a card Good and corrupts its scheduling, whereas a false "not
   recognized" just reads the answer out and lets you grade it.
+- **Accepted answers live in note TAGS, because nothing else can hold them.**
+  The obvious idea — stash accepted phrasings inside the card, say as an HTML
+  comment — is impossible: the JS API exposes no method that writes field
+  content (checked against `assets/scripts/js-api.js` upstream; the write surface
+  is burying, suspending, flagging, due dates and tags). Browser storage is no good
+  either, since the random port orphans `localStorage` and IndexedDB on every
+  launch, and the settings cookie is a shared ~4 KB. Tags are writable, durable,
+  per-note and they sync. The cost is that they are visible in the browser and
+  the tag sidebar, which is exactly why the feature is off by default.
+  On the write path, prefer `ankiAddTagToNote` even though it is deprecated
+  upstream: it is **additive**, so it cannot lose a tag. `ankiSetNoteTags`
+  REPLACES the note's entire tag list, making it a read-modify-write where a
+  malformed read would destroy the user's tags — it is the fallback only, and only
+  after a read that clearly succeeded (`tagList` returns null on `success:false`
+  or a missing `value`, rather than guessing).
 - **The spoken-answer length gate needs a voice.** `maxAnswerWords` is a crude
   noise filter: without it, any stray speech on the question side would reveal
   the card. But a rejection used to be completely silent — the flow just reopened

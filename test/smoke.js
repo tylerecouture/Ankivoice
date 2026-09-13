@@ -56,6 +56,14 @@ function makeApi(state) {
     ankiGetNextTime2() { return Promise.resolve('{"success":true,"value":"8m"}'); }
     ankiGetNextTime3() { return Promise.resolve('{"success":true,"value":"4d"}'); }
     ankiGetNextTime4() { return Promise.resolve('{"success":true,"value":"9d"}'); }
+    ankiGetCardNid() { return reply(state.nid); }
+    ankiGetNoteTags() {
+      state.tagReads++;
+      if (state.tagsBroken) return Promise.resolve({ success: false, value: "boom" });
+      return Promise.resolve({ success: true, value: state.tags.slice() });
+    }
+    ankiAddTagToNote(nid, tag) { state.added.push([nid, tag]); state.tags.push(tag); return reply("true"); }
+    ankiSetNoteTags(tags) { state.tagWrites.push(tags.slice()); state.tags = tags.slice(); return reply("true"); }
     ankiAnswerEase1() { state.graded.push(1); }
     ankiAnswerEase2() { state.graded.push(2); }
     ankiAnswerEase3() { state.graded.push(3); }
@@ -68,6 +76,8 @@ async function boot(html, opts) {
   const state = {
     spoken: [], graded: [], micStarts: 0, showAnswer: 0, buried: 0,
     speaking: false, onAnswer: !!opts.onAnswer, errors: [],
+    nid: "1234", tags: (opts.tags || []).slice(), tagWrites: [], added: [],
+    tagReads: 0, tagsBroken: !!opts.tagsBroken,
   };
   const dom = new JSDOM("<!doctype html><html><body>" + html + "</body></html>", {
     url: "http://127.0.0.1:41234/",
@@ -261,6 +271,102 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     await wait(200);
     ok("closing the panel does not re-read the card", state.spoken.length === spokenBefore);
     ok("closing the panel reopens the mic", state.micStarts >= 2);
+  }
+
+  // ---------- remembering an accepted answer (off unless asked for) ----------
+  const backWithAttempt = (extra) => Object.assign({
+    onAnswer: true,
+    cfg: { detectAnswer: true },
+    storage: {
+      av_qlines: JSON.stringify(["Which book?"]),
+      av_attempt: JSON.stringify(["the goblet of fire"]),
+      av_adone: "1",
+    },
+  }, extra || {});
+
+  {
+    // default: never touches tags, never asks
+    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt());
+    await wait(300);
+    win.ankiSttResult(heard("good"));
+    await wait(400);
+    ok("off by default: no prompt", !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("off by default: card is graded straight away", state.graded[0] === 3);
+    ok("off by default: tags are never even read", state.tagReads === 0 && state.added.length === 0);
+  }
+  {
+    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true }, tags: ["leech"] }));
+    await wait(300);
+    win.ankiSttResult(heard("good"));
+    await wait(400);
+    ok("it offers to remember the phrase", state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("and holds off grading until answered", state.graded.length === 0);
+    win.ankiSttResult(heard("yes"));
+    await wait(400);
+    ok("yes adds one tag", state.added.length === 1);
+    ok("the tag encodes the phrase", state.added[0][1] === "AnkiVoice::ok::the-goblet-of-fire");
+    ok("it uses the additive call, never a wholesale rewrite", state.tagWrites.length === 0);
+    ok("existing tags are untouched", state.tags.indexOf("leech") >= 0);
+    ok("it confirms out loud", state.spoken.indexOf("Saved.") >= 0);
+    ok("and then grades the card", state.graded[0] === 3);
+  }
+  {
+    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
+    await wait(300);
+    win.ankiSttResult(heard("hard"));
+    await wait(400);
+    win.ankiSttResult(heard("no"));
+    await wait(400);
+    ok("no writes nothing", state.added.length === 0 && state.tagWrites.length === 0);
+    ok("but still grades", state.graded[0] === 2);
+  }
+  {
+    // silence at the prompt must not strand an ungraded card
+    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
+    await wait(300);
+    win.ankiSttResult(heard("easy"));
+    await wait(400);
+    win.ankiSttResult(silence());
+    await wait(400);
+    ok("no reply still grades the card", state.graded[0] === 4);
+    ok("and saves nothing", state.added.length === 0);
+  }
+  {
+    // "again" means you were wrong - nothing worth remembering
+    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
+    await wait(300);
+    win.ankiSttResult(heard("again"));
+    await wait(400);
+    ok("Again never offers to remember", !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("Again just grades", state.graded[0] === 1);
+  }
+  {
+    // a tag saved earlier makes the same answer count next time
+    const { state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt({
+        cfg: { detectAnswer: true, rememberAnswers: true },
+        tags: ["AnkiVoice::ok::the-goblet-of-fire"],
+      }));
+    await wait(400);
+    ok("a remembered answer is accepted on the next review", state.spoken.indexOf("Correct.") >= 0);
+    ok("and auto-grades Good", state.graded[0] === 3);
+  }
+  {
+    // a broken tag read must never lead to a write
+    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true }, tagsBroken: true }));
+    await wait(300);
+    win.ankiSttResult(heard("good"));
+    await wait(400);
+    win.ankiSttResult(heard("yes"));
+    await wait(400);
+    ok("a failed tag read never rewrites tags", state.tagWrites.length === 0);
+    ok("the card is still graded", state.graded[0] === 3);
   }
 
   // ---------- every setting is reachable without a keyboard ----------

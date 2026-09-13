@@ -2,7 +2,29 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v32**
+Current: **v33**
+
+## v33
+
+**Remember answers** - new, and **off by default**.
+
+Say something the plugin doesn't accept, then grade the card Hard, Good or Easy
+anyway, and it asks whether to remember that phrase as a right answer for this
+card. Say yes and it counts from then on. Say no, say nothing, or say something
+it can't parse, and it simply grades the card. Grading Again never asks, because
+that means you were wrong.
+
+The phrase is stored as a tag on the note (`AnkiVoice::ok::the-goblet-of-fire`).
+Tags are the only writable, durable, syncing store the AnkiDroid JS API offers -
+there is no way to edit a note's fields from card JavaScript, so this cannot be
+hidden inside the card. The trade-off is that the tags are visible in the browser
+and the tag sidebar on all your devices, which is exactly why the feature stays
+off until you turn it on. `tag:AnkiVoice::ok::*` finds everything it has learned,
+and deleting a tag undoes it.
+
+Existing tags are never disturbed: the plugin uses AnkiDroid's *additive* tag
+call, and where that is unavailable it refuses to write at all unless it first
+read the note's existing tags cleanly.
 
 ## v32
 
