@@ -3,11 +3,26 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 31
+   VERSION: 33
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v33 - new, OFF by default: "Remember answers". Say an answer it doesn't
+           accept, then grade the card Hard/Good/Easy anyway, and it offers to
+           remember that phrase for this card in future. Stored as a tag on the
+           note (AnkiVoice::ok::...), so it syncs and survives reinstalls - and
+           is visible in the browser, which is why it is opt-in. Existing tags
+           are never disturbed.
+     v32 - answer matching ignores filler words, so an adequate answer no longer
+           has to be word-perfect: "it's Bamako" and "the capital is Bamako" now
+           match "Bamako". A partial answer is accepted when it covers enough of
+           the answer's content words (new "Accept partial answers" setting,
+           default 60%) - lower it for leniency, 0 to require the whole answer.
+           Speech/recognition language is now set by tapping a language chip,
+           since the on-screen keyboard still does not open in the settings on
+           some devices (confirmed on a Pixel 9); nothing in the panel now needs
+           typing.
      v31 - spoken answers: the word limit that decides whether a phrase counts as
            an answer was 3, so anything longer ("the Half Blood Prince") was
            dropped in silence - it looked like the app heard you and ignored you.
@@ -104,7 +119,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 31;
+  var AV_VERSION = 33;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -117,6 +132,11 @@
     pauseSeconds: 10,           // "pause" command: mic off this long, then resume
     detectAnswer: false,        // question side: also try to recognise a spoken answer (off by default)
     maxAnswerWords: 8,          // longest phrase that still counts as a spoken answer
+    rememberAnswers: false,     // offer to save an unrecognised answer onto the note as a tag (off by default)
+    answerCoverage: 60,         // % of the answer's content words a partial answer must cover (0 = off)
+                                //   60 is deliberately cautious: at 50, "Harry Potter" would be accepted
+                                //   for "Harry Potter and the Goblet of Fire" - both cover 2 of 4 content
+                                //   words, and nothing in the text says which half is the answer.
     voiceTest: false,           // diagnostic: show what the recognizer heard, without acting on it
     maxNoMatchTries: 12,        // recognized-but-unmatched replies before auto-pausing (noise guard)
     announceInterval: true,     // speak the next review interval after grading
@@ -133,7 +153,9 @@
     words_help:   "help",
     words_off:    "off",
     words_stop:   "stop, quit, exit, cancel",
-    words_repeat: "repeat"
+    words_repeat: "repeat",
+    words_yes:    "yes, yeah, yep, yup, sure, sir, save, remember, affirmative",
+    words_no:     "no, nope, nah, negative, don t, do not, never"
   };
   var CFG_DEFAULTS = {}; for (var _dk in CFG) CFG_DEFAULTS[_dk] = CFG[_dk];
   try {
@@ -321,16 +343,58 @@
     try { s = s.normalize("NFKD").replace(/[\u0300-\u036F]/g, ""); } catch (e) {}
     return s.replace(AV_PUNCT, " ").replace(/\s+/g, " ").trim();
   }
-  // Conservative match: attempt equals an answer line, or is contained (whole
-  // phrase) in a SHORT answer line - avoids false hits inside longer sentences.
-  function answerMatches(attempt, answerLines) {
+  // Filler that carries no answer content, so "it's Bamako" and "Bamako" agree.
+  // ("s" and "t" are here because normalize() turns "it's" into "it s".)
+  var AV_STOPWORDS = {
+    a:1, an:1, and:1, are:1, as:1, at:1, be:1, by:1, did:1, do:1, does:1, for:1,
+    from:1, had:1, has:1, have:1, he:1, her:1, his:1, i:1, in:1, is:1, it:1,
+    its:1, my:1, of:1, on:1, or:1, our:1, s:1, she:1, t:1, that:1, the:1,
+    their:1, them:1, they:1, this:1, to:1, was:1, we:1, were:1, with:1, you:1,
+    your:1
+  };
+  function contentWords(s) {
+    var raw = normalize(s).split(" "), out = [], i;
+    for (i = 0; i < raw.length; i++) if (raw[i] && !AV_STOPWORDS[raw[i]]) out.push(raw[i]);
+    // An answer that is nothing but filler ("the") still has to be matchable.
+    if (!out.length) for (i = 0; i < raw.length; i++) if (raw[i]) out.push(raw[i]);
+    return out;
+  }
+  function hasAll(hay, needles) {
+    for (var i = 0; i < needles.length; i++) {
+      var found = false;
+      for (var j = 0; j < hay.length; j++) if (hay[j] === needles[i]) { found = true; break; }
+      if (!found) return false;
+    }
+    return true;
+  }
+
+  // Matching ignores filler words, so an adequate answer does not have to be
+  // word-perfect. Two tiers:
+  //   - you said at least every content word of the answer -> always accepted
+  //     ("it's Bamako", "the capital is Bamako" for "Bamako")
+  //   - you said only PART of the answer -> accepted when it covers at least
+  //     coveragePct of the answer's content words.
+  // Coverage alone rejects a lone word lifted out of a long descriptive answer:
+  // "Guinea" is 1 of 6 content words in "Flag similar to Guinea and red flipped
+  // darker", i.e. 17%, nowhere near any sane threshold. No separate rule needed.
+  function answerMatches(attempt, answerLines, coveragePct) {
     var a = normalize(attempt);
     if (!a || a.length < 2) return false;
+    var aw = contentWords(attempt);
+    if (!aw.length) return false;
+    var need = (coveragePct == null) ? 50 : coveragePct;
     for (var i = 0; i < answerLines.length; i++) {
       var ln = normalize(answerLines[i]);
       if (!ln) continue;
-      if (ln === a) return true;
-      if (ln.split(" ").length <= 4 && (" " + ln + " ").indexOf(" " + a + " ") >= 0) return true;
+      if (ln === a) return true;                       // word-perfect
+      var lw = contentWords(answerLines[i]);
+      if (!lw.length) continue;
+      if (hasAll(aw, lw)) return true;                 // said the whole answer, plus filler
+      if (need > 0 && hasAll(lw, aw)) {
+        var covered = 0;                               // a fragment of the answer
+        for (var j = 0; j < lw.length; j++) if (hasAll(aw, [lw[j]])) covered++;
+        if (covered * 100 >= lw.length * need) return true;
+      }
     }
     return false;
   }
@@ -338,11 +402,42 @@
   // "bamboo"). Each has to be tested on its own: concatenating them makes a word
   // salad that matches no answer line and blows straight past the word-count gate,
   // which is what made "detect spoken answers" look broken before v29.
-  function anyAnswerMatches(attempts, answerLines) {
-    for (var i = 0; i < attempts.length; i++) if (answerMatches(attempts[i], answerLines)) return true;
+  function anyAnswerMatches(attempts, answerLines, coveragePct) {
+    for (var i = 0; i < attempts.length; i++) {
+      if (answerMatches(attempts[i], answerLines, coveragePct)) return true;
+    }
     return false;
   }
   function isArr(v) { return Object.prototype.toString.call(v) === "[object Array]"; }
+
+  // Accepted-answer memory lives in the note's TAGS. It is the only writable,
+  // durable, syncing store the JS API exposes - there is no way to edit a note's
+  // fields from card JS, so an HTML comment in the card is not an option.
+  var AV_TAG = "AnkiVoice::ok::";
+  function encodeTag(phrase) {
+    return normalize(phrase).replace(/ /g, "-");        // tags cannot contain spaces
+  }
+  function decodeTag(tag) {
+    return tag.slice(AV_TAG.length).replace(/-/g, " ").trim();
+  }
+  // The API hands tags back in more than one shape depending on version; be
+  // liberal, because the alternative is silently losing the user's tags.
+  function tagList(r) {
+    var v = r;
+    if (v && typeof v === "object") {
+      if (v.success === false) return null;             // an error is not a tag list
+      if (!("value" in v)) return null;
+      v = v.value;
+    }
+    if (typeof v === "string") {
+      try { var parsed = JSON.parse(v); if (isArr(parsed)) return parsed; } catch (e) {}
+      v = v.split(/\s+/);
+    }
+    if (!isArr(v)) return null;
+    var out = [];
+    for (var i = 0; i < v.length; i++) { var t = String(v[i]).trim(); if (t) out.push(t); }
+    return out;
+  }
   // Split the recognizer's hypotheses into those short enough to count as a spoken
   // answer, and the longest one rejected purely for length - so the UI can say why
   // nothing happened instead of silently listening again.
@@ -460,6 +555,46 @@
     return false;
   }
 
+  // Answers previously accepted for THIS note, read back from its tags.
+  async function acceptedAnswers(api) {
+    if (!CFG.rememberAnswers || !api || typeof api.ankiGetNoteTags !== "function") return [];
+    try {
+      var tags = tagList(await api.ankiGetNoteTags());
+      if (!tags) return [];
+      var out = [];
+      for (var i = 0; i < tags.length; i++) {
+        if (tags[i].indexOf(AV_TAG) === 0) { var d = decodeTag(tags[i]); if (d) out.push(d); }
+      }
+      return out;
+    } catch (e) { return []; }
+  }
+  // Two ways to add a tag, and the ORDER matters for safety:
+  //   ankiAddTagToNote is additive - it cannot lose an existing tag. It is marked
+  //     deprecated upstream, but deprecated still works and cannot clobber.
+  //   ankiSetNoteTags REPLACES every tag on the note, so using it means a
+  //     read-modify-write, and a bad read would wipe the user\u0027s tags. Only used
+  //     when the additive call is unavailable, and only after a read that clearly
+  //     succeeded. Losing someone\u0027s tags to save a phrase is far worse than not
+  //     saving the phrase.
+  async function rememberAnswer(api, phrase) {
+    if (!CFG.rememberAnswers || !api) return false;
+    var tag = AV_TAG + encodeTag(phrase);
+    if (tag === AV_TAG) return false;
+    try {
+      if (typeof api.ankiAddTagToNote === "function" && typeof api.ankiGetCardNid === "function") {
+        var nid = unwrapValue(await api.ankiGetCardNid());
+        if (nid) { await api.ankiAddTagToNote(nid, tag); return true; }
+      }
+      if (typeof api.ankiGetNoteTags !== "function" || typeof api.ankiSetNoteTags !== "function") return false;
+      var tags = tagList(await api.ankiGetNoteTags());
+      if (!tags) return false;                          // no reliable read -> never write
+      for (var i = 0; i < tags.length; i++) if (tags[i] === tag) return true;    // already known
+      tags.push(tag);
+      await api.ankiSetNoteTags(tags);
+      return true;
+    } catch (e) { return false; }
+  }
+
   // ---------------- per-card flow ----------------
   // resume === true: the current side has already been read aloud (the user tapped
   // to un-pause, or closed the settings panel), so go straight to the microphone
@@ -469,6 +604,7 @@
     var myGen = ++window.__avGen;
     function dead() { return myGen !== window.__avGen; }
     var mainText = "", onAnswer = false, tries = 0, noMatch = 0, listening = false;
+    var unmatched = "", pendingGrade = null;   // a spoken answer we could offer to remember
 
     try { if (api) api.ankiSttStop(); } catch (e) {}   // stop any mic left over from a previous flow
 
@@ -520,6 +656,16 @@
       await speak(why + " Microphone paused. Tap the button to listen again.");
     }
 
+    // "Again" means you got it wrong, so there is nothing worth remembering.
+    async function maybeRemember(ease, label) {
+      if (!CFG.rememberAnswers || !unmatched || ease === 1) return grade(ease, label);
+      pendingGrade = { ease: ease, label: label };
+      S("Remember \"" + unmatched + "\"? \u2014 say yes or no");
+      await speak("Should I remember, " + unmatched + ", as a right answer for this card? Say yes, or no.");
+      if (dead()) return;
+      return listen();
+    }
+
     async function grade(ease, label) {
       var spoken = "";
       if (CFG.announceInterval) {
@@ -549,6 +695,10 @@
           await speak("Microphone permission is missing.");
           return;
         }
+        if (pendingGrade) {                            // no reply to "remember this?"
+          var pgs = pendingGrade; pendingGrade = null;
+          return grade(pgs.ease, pgs.label);
+        }
         if (++tries >= CFG.maxListenTries) return pauseMic("silence");
         await sleep(CFG.restartGapMs);
         return listen();
@@ -564,6 +714,18 @@
       if (CFG.voiceTest) showHeard("heard:  " + hyps.join("   |   "));   // show, but keep working normally
       S("heard: " + (hyps[0] || ""));   // full list goes to the voice-test bar
       var matched = function (key) { if (!said(hyps, key)) return false; noMatch = 0; return true; };
+      if (pendingGrade) {
+        // Answering the "should I remember this?" prompt. Anything that is not a
+        // clear yes just grades the card - never leave it hanging on a mishear.
+        var pg = pendingGrade; pendingGrade = null;
+        if (said(hyps, "yes")) {
+          var saved = await rememberAnswer(api, unmatched);
+          if (dead()) return;
+          await speak(saved ? "Saved." : "Sorry, I could not save that.");
+          if (dead()) return;
+        }
+        return grade(pg.ease, pg.label);
+      }
       if (matched("stop")) { paused = true; letSleep(); S("Paused \u2014 tap to listen again"); return; }
       if (matched("off")) { lsSet("av_on", "0"); stopFlow(); paintOff(); try { if (api) api.ankiTtsSpeak("Voice off."); } catch (e) {} return; }
       if (matched("help")) { await speak(commandsText(onAnswer)); if (dead()) return; return listen(); }
@@ -596,10 +758,10 @@
       } else {
         // Grade words are only matched on the answer side, so these homophones are
         // safe: they're what the recognizer tends to hear for the intended grade.
-        if (matched("easy")) return grade(4, "easy");
-        if (matched("hard")) return grade(2, "hard");
+        if (matched("easy")) return maybeRemember(4, "easy");
+        if (matched("hard")) return maybeRemember(2, "hard");
         if (matched("again")) return grade(1, "again");
-        if (matched("good")) return grade(3, "good");
+        if (matched("good")) return maybeRemember(3, "good");
       }
       // Heard something, recognised nothing. A television or a conversation in the
       // room produces these indefinitely, so they must count towards the auto-pause
@@ -654,7 +816,11 @@
             // The question side's readout died with the page reload, so "Answer not
             // recognized" would otherwise arrive with no clue what was misheard.
             if (attempts.length) showBar("you said: " + attempts.join("   |   "), true);
-            if (CFG.detectAnswer && attempts.length && anyAnswerMatches(attempts, ansLines)) {
+            // Phrases accepted for this note on an earlier review, stored as tags.
+            var known = (CFG.detectAnswer && attempts.length) ? await acceptedAnswers(api) : [];
+            if (dead()) return;
+            var pool = known.length ? ansLines.concat(known) : ansLines;
+            if (CFG.detectAnswer && attempts.length && anyAnswerMatches(attempts, pool, CFG.answerCoverage)) {
               await speak("Correct.");
               if (dead()) return;
               api.ankiAnswerEase3();                              // recognised -> Good, skip grading
@@ -664,6 +830,7 @@
             var aDone = lsGet("av_adone") === "1";
             lsSet("av_adone", "1");
             if (CFG.detectAnswer && attempts.length) {
+              unmatched = attempts[0];                            // may be worth remembering
               await speak("Answer not recognized.");              // attempted but no match
               if (dead()) return;
             }
@@ -709,6 +876,12 @@
   lsSet("av_ts", String(nowTs));
 
   // ---------------- settings panel (gear on the far right) ----------------
+  // Common BCP-47 tags, offered as chips so a language can be set without typing.
+  var AV_LANGS = [
+    "en-US", "en-GB", "fr-FR", "de-DE", "es-ES", "it-IT", "pt-BR", "nl-NL",
+    "pl-PL", "ru-RU", "sv-SE", "tr-TR", "ja-JP", "ko-KR", "zh-CN", "ar-SA",
+    "hi-IN", "he-IL", "cs-CZ", "el-GR", "id-ID", "vi-VN"
+  ];
   var AV_SETTINGS = [
     { k: "detectAnswer",        label: "Detect spoken answers",       type: "bool" },
     { k: "keepScreenAwake",     label: "Keep screen awake",           type: "bool" },
@@ -717,12 +890,14 @@
     { k: "pauseSeconds",        label: "'Pause' command length",      type: "num", min: 2, max: 60,    step: 1,   unit: "s" },
     { k: "maxListenTries",      label: "Retries before pausing",      type: "num", min: 1, max: 20,    step: 1,   unit: "" },
     { k: "maxAnswerWords",      label: "Max words for answer match",  type: "num", min: 1, max: 20,    step: 1,   unit: "" },
+    { k: "answerCoverage",      label: "Accept partial answers",      type: "num", min: 0, max: 100,   step: 10,  unit: "%" },
     { k: "restartGapMs",        label: "Mic restart gap",             type: "num", min: 0, max: 1000,  step: 50,  unit: "ms" },
     { k: "voiceTest",           label: "Voice test (show heard words)", type: "bool" },
+    { k: "rememberAnswers",     label: "Remember answers (adds tags)", type: "bool" },
     { k: "announceInterval",    label: "Announce next interval",       type: "bool" },
     { k: "maxNoMatchTries",     label: "Unknown replies before pausing", type: "num", min: 2, max: 40, step: 1, unit: "" },
-    { k: "ttsLang",  label: "Speech language", type: "text", ph: "e.g. en-US, fr-FR, de-DE" },
-    { k: "sttLang",  label: "Recognition language", type: "text", ph: "e.g. en-US (ignored if unsupported)" },
+    { k: "ttsLang",  label: "Speech language", type: "text", ph: "e.g. en-US, fr-FR, de-DE", opts: AV_LANGS },
+    { k: "sttLang",  label: "Recognition language", type: "text", ph: "e.g. en-US (ignored if unsupported)", opts: AV_LANGS },
     { k: "words_answer", label: "Extra words \u2192 Answer", type: "words" },
     { k: "words_again",  label: "Extra words \u2192 Again",  type: "words" },
     { k: "words_hard",   label: "Extra words \u2192 Hard",   type: "words" },
@@ -733,7 +908,9 @@
     { k: "words_help",   label: "Extra words \u2192 Help",   type: "words" },
     { k: "words_off",    label: "Extra words \u2192 Off",    type: "words" },
     { k: "words_stop",   label: "Extra words \u2192 Stop",   type: "words" },
-    { k: "words_repeat", label: "Extra words \u2192 Repeat", type: "words" }
+    { k: "words_repeat", label: "Extra words \u2192 Repeat", type: "words" },
+    { k: "words_yes",    label: "Extra words \u2192 Yes",    type: "words" },
+    { k: "words_no",     label: "Extra words \u2192 No",     type: "words" }
   ];
   var panel = null, refreshers = [], panelNote = null;
   var AV_COOKIE_MAX = 3800;      // real limit is ~4096 bytes per cookie; leave headroom
@@ -837,9 +1014,37 @@
         inp.addEventListener("touchend", function (e) { e.stopPropagation(); focusIt(); });
         inp.addEventListener("touchstart", function (e) { e.stopPropagation(); }, { passive: true });
 
-        if (s.type === "text") {                       // plain field, no vocabulary chips
-          var pT = (function (el, key) { return function () { el.value = CFG[key] || ""; }; })(inp, s.k);
-          refreshers.push(pT); row.appendChild(inp); box.appendChild(row); return;
+        if (s.type === "text") {
+          // Tappable presets, because the on-screen keyboard does not reliably
+          // open for inputs in AnkiDroid's reviewer WebView - confirmed still
+          // broken on a Pixel 9 even after the user-select fix. The field stays
+          // for devices where typing works, and for values not in the list.
+          var opts = s.opts || [];
+          var chipsT = document.createElement("div");
+          chipsT.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;";
+          var renderOpts = (function (key) {
+            return function () {
+              chipsT.textContent = "";
+              var cur = String(CFG[key] || "");
+              for (var oi = 0; oi < opts.length; oi++) {
+                (function (val) {
+                  var on = (val.toLowerCase() === cur.toLowerCase());
+                  var c = mkChip(val, on ? "background:#1565c0;color:#fff;" : "background:#37474f;color:#fff;");
+                  c.onclick = function (e) {
+                    e.stopPropagation();
+                    CFG[key] = val; saveCfg(); renderOpts(); inp.value = val;
+                  };
+                  chipsT.appendChild(c);
+                })(opts[oi]);
+              }
+            };
+          })(s.k);
+          inp.__chips = renderOpts;
+          var pT = (function (el, key) { return function () { el.value = CFG[key] || ""; renderOpts(); }; })(inp, s.k);
+          renderOpts();
+          refreshers.push(pT);
+          if (opts.length) row.appendChild(chipsT);
+          row.appendChild(inp); box.appendChild(row); return;
         }
 
         var chipsOn = document.createElement("div");

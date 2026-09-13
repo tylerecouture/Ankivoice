@@ -84,12 +84,17 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   swipe gestures don't select text. Inherited into our settings panel, that
   appears to be what stops the on-screen keyboard opening for the word-list text
   fields (reported on-device; the inputs take focus but no IME appears). The
-  panel now sets `-webkit-user-select: text` / `user-select: text` and
-  `touch-action: manipulation` on its inputs and forces `focus()` on tap — but
-  because that fix is unverified, the word lists are *also* fully editable
-  without typing (tap a chip to remove a word, tap a `+ word` chip under "heard
-  recently" to add one). The chip path is the supported one; the text field is a
-  convenience where the keyboard does appear.
+  panel sets `-webkit-user-select: text` / `user-select: text` and
+  `touch-action: manipulation` on its inputs and forces `focus()` on tap.
+  **That fix does not work.** Confirmed on a Pixel 9 (v30): the keyboard still
+  refuses to open, so the stylesheet is not the cause, or not the only one. The
+  likely remaining explanation is app-level — the reviewer WebView is not set up
+  to accept text input at all (AnkiDroid has historically rendered type-in-answer
+  as a native field rather than an HTML one, which points the same way) — and
+  card JS cannot change that. Treat the panel as **keyboard-free by design**: as
+  of v32 every setting is reachable by tapping (bools toggle, numbers step,
+  vocabulary and languages are chips), and the text inputs are a bonus for
+  devices where typing happens to work.
 
 ## Design choices that follow
 
@@ -123,6 +128,34 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   NFKD and drops combining marks (so "cafe" still matches "café"), and strips
   only punctuation ranges. Command matching runs through it on both sides, so a
   hypothesis that comes back as "Hard." matches the vocabulary word "hard".
+- **Answer matching compares content words, and partial credit is a dial, not a
+  rule.** The original matcher wanted the answer verbatim or inside a line of
+  four words or fewer, which rejected almost every natural phrasing ("it's
+  Bamako", "the capital is Bamako", "mitochondria" for "The mitochondria").
+  v32 strips filler and compares content words. Saying *at least* the whole
+  answer is always accepted — that direction is unambiguous. Saying only *part*
+  of it is not: "Goblet of Fire" and "Harry Potter" each cover exactly two of
+  the four content words in "Harry Potter and the Goblet of Fire", and no string
+  heuristic can tell which half is the answer, because the card does not say.
+  So partial credit is a percentage the user sets (default 60, cautious), not a
+  judgement the code pretends to make. The asymmetry matters: a false "Correct"
+  silently marks a card Good and corrupts its scheduling, whereas a false "not
+  recognized" just reads the answer out and lets you grade it.
+- **Accepted answers live in note TAGS, because nothing else can hold them.**
+  The obvious idea — stash accepted phrasings inside the card, say as an HTML
+  comment — is impossible: the JS API exposes no method that writes field
+  content (checked against `assets/scripts/js-api.js` upstream; the write surface
+  is burying, suspending, flagging, due dates and tags). Browser storage is no good
+  either, since the random port orphans `localStorage` and IndexedDB on every
+  launch, and the settings cookie is a shared ~4 KB. Tags are writable, durable,
+  per-note and they sync. The cost is that they are visible in the browser and
+  the tag sidebar, which is exactly why the feature is off by default.
+  On the write path, prefer `ankiAddTagToNote` even though it is deprecated
+  upstream: it is **additive**, so it cannot lose a tag. `ankiSetNoteTags`
+  REPLACES the note's entire tag list, making it a read-modify-write where a
+  malformed read would destroy the user's tags — it is the fallback only, and only
+  after a read that clearly succeeded (`tagList` returns null on `success:false`
+  or a missing `value`, rather than guessing).
 - **The spoken-answer length gate needs a voice.** `maxAnswerWords` is a crude
   noise filter: without it, any stray speech on the question side would reveal
   the card. But a rejection used to be completely silent — the flow just reopened
@@ -175,11 +208,11 @@ change would add `MODIFY_AUDIO_SETTINGS` + set the `AudioManager` mode to unlock
   A plain script tag should resolve against `loadDataWithBaseURL`'s base URL and
   would be simpler, but the fetch form is the one verified on-device and it
   reports load failures visibly. Untested, so unchanged.
-- **Does this AnkiDroid build expose a recognition-language setter?** v29 calls
-  `api.ankiSttSetLanguage(CFG.sttLang)` behind a `typeof === "function"` guard,
-  inferred from `JavaScriptSTT` passing a `language` into `EXTRA_LANGUAGE`. If
-  the method does not exist the call is skipped silently and recognition stays on
-  the device default. Needs checking against the JS API version in use.
+- ~~**Does this AnkiDroid build expose a recognition-language setter?**~~
+  **Resolved:** `ankiSttSetLanguage` is in the JS API (confirmed against
+  `assets/scripts/js-api.js` upstream), alongside `ankiTtsSetLanguage`,
+  `ankiTtsSetPitch` and `ankiTtsSetSpeechRate`. The `typeof` guard around the
+  call can stay as cheap insurance for older builds, but the setting does work.
 - **Compatibility baseline.** The code is written in ES5 *style* (`var`, function
   declarations, no arrow functions or optional chaining) but it does use
   `async`/`await`, `Promise`, `String.prototype.normalize`, `navigator.wakeLock`

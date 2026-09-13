@@ -17,6 +17,7 @@ const assert = require("assert");
 const ROOT = path.join(__dirname, "..");
 const src = fs.readFileSync(path.join(ROOT, "_ankivoice.js"), "utf8");
 const changelog = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
+const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
 // --- pull a top-level `function NAME(...) { ... }` out of the source ---
 // Brace-matched rather than regex-terminated, so one-line helpers and nested
@@ -46,11 +47,14 @@ let CFG = {};
 eval(grabVar("AV_BLOCK"));
 eval(grabVar("AV_UNITS"));
 eval(grabVar("AV_PUNCT"));
+eval(grabVar("AV_STOPWORDS"));
 eval(grab("textWithBreaks"));
 eval(grab("extractLines"));
 eval(grab("speechJoin"));
 eval(grab("subtractLines"));
 eval(grab("normalize"));
+eval(grab("contentWords"));
+eval(grab("hasAll"));
 eval(grab("answerMatches"));
 eval(grab("anyAnswerMatches"));
 eval(grab("answerAttempts"));
@@ -132,12 +136,58 @@ ok("answerMatches wrong", answerMatches("mali", ["Bamako"]) === false);
 ok("answerMatches not-in-long-sentence", answerMatches("guinea", ["Flag similar to Guinea and red flipped darker"]) === false);
 ok("answerMatches accent-insensitive", answerMatches("cafe", ["Café"]) === true);
 
+// Filler words are ignored, so an adequate answer need not be word-perfect.
+eq("contentWords drops filler", contentWords("the capital is Bamako"), ["capital", "bamako"]);
+eq("contentWords survives an all-filler answer", contentWords("the"), ["the"]);
+ok("hasAll is a subset test", hasAll(["a", "b", "c"], ["c", "a"]) === true);
+ok("hasAll rejects a missing word", hasAll(["a", "b"], ["a", "z"]) === false);
+
+// Tier 1: you said at least every content word of the answer. Always accepted,
+// at any coverage setting, because nothing is missing.
+ok("filler added around the answer", answerMatches("it's Bamako", ["Bamako"]) === true);
+ok("a whole sentence containing the answer", answerMatches("the capital is Bamako", ["Bamako"]) === true);
+ok("leading article on the card", answerMatches("mitochondria", ["The mitochondria"]) === true);
+ok("tier 1 ignores the coverage setting", answerMatches("it's Bamako", ["Bamako"], 0) === true);
+
+// Tier 2: only PART of the answer, gated on how much of it you covered.
+(() => {
+  const book = ["Harry Potter and the Goblet of Fire"];   // 4 content words
+  ok("half the title is rejected at the cautious default", answerMatches("goblet of fire", book, 60) === false);
+  ok("...and accepted when lowered to 50", answerMatches("goblet of fire", book, 50) === true);
+  // the reason the default is cautious: nothing distinguishes these two halves
+  ok("the WRONG half is equally accepted at 50", answerMatches("harry potter", book, 50) === true);
+  ok("...and equally rejected at 60", answerMatches("harry potter", book, 60) === false);
+  ok("partial matching off entirely", answerMatches("goblet of fire", book, 0) === false);
+})();
+eq("two of three content words clears 60%",
+   answerMatches("united states", ["The United States of America"], 60), true);
+
+// Coverage alone keeps a lone word out of a long descriptive answer: 1 of 6
+// content words is 17%, below any sane threshold, so no extra minimum-length
+// rule is needed. Set the threshold below 17 and it does match - which is
+// exactly what the number is for.
+(() => {
+  const flag = ["Flag similar to Guinea and red flipped darker"];
+  ok("a lone word in a long answer is rejected at the default", answerMatches("guinea", flag, 60) === false);
+  ok("...and at a lenient 50", answerMatches("guinea", flag, 50) === false);
+  ok("...and at 20, just above its 17%", answerMatches("guinea", flag, 20) === false);
+  ok("...but 10 lets it through, as the setting promises", answerMatches("guinea", flag, 10) === true);
+})();
+
 // The recognizer returns competing hypotheses. Each must be tested on its own:
 // concatenating them (pre-v29) produced a phrase that matched nothing.
 (() => {
   const hyps = ["bamboo", "bamako", "bam ako"];
   ok("anyAnswerMatches picks the right hypothesis", anyAnswerMatches(hyps, ["Bamako"]) === true);
-  ok("joined hypotheses match nothing (the v29 bug)", answerMatches(hyps.join(" "), ["Bamako"]) === false);
+})();
+// Joining the hypotheses is still wrong, though the v31 matcher changed HOW.
+// It used to make a phrase that matched nothing; now it pools every guess's
+// words together, so the pool can satisfy an answer that no single guess does.
+(() => {
+  const answer = ["Red Flag"];
+  const hyps = ["red", "flag balloon"];
+  ok("no single hypothesis is good enough", anyAnswerMatches(hyps, answer, 60) === false);
+  ok("...but their pooled words would falsely match", answerMatches(hyps.join(" "), answer, 60) === true);
   ok("anyAnswerMatches stays wrong when it should", anyAnswerMatches(["mali", "molly"], ["Bamako"]) === false);
 })();
 
@@ -193,6 +243,59 @@ ok("said does not stitch hypotheses", said(["hard", "one"], "hard") === false);
 CFG = { words_hard: "  hard , , heart  " };
 ok("said ignores blank vocab entries", said(heardOf("heart"), "hard") === true);
 ok("said blank entry matches nothing", said(heardOf("banana"), "hard") === false);
+
+// ---------------- the README's documented behaviour is the real behaviour ----
+// Both tables are generated by tools/gen_answer_tables.js; every row is
+// re-derived here, so changing the matcher without regenerating fails the suite.
+function tableBetween(startMarker, endMarker) {
+  const a = readme.indexOf(startMarker);
+  const b = readme.indexOf(endMarker);
+  ok("README contains " + startMarker, a >= 0 && b > a);
+  return readme.slice(a, b).split("\n")
+    .filter((l) => l.trim().startsWith("|") && !/^\|[\s-]*\|[\s-]*\|/.test(l))
+    .map((l) => l.split("|").slice(1, -1).map((c) => c.trim()));
+}
+(() => {
+  const rows = tableBetween("<!-- ANSWER-CASES:START", "<!-- ANSWER-CASES:END");
+  let answer = null, checked = 0;
+  for (const cells of rows) {
+    if (cells[0] === "The card's answer") continue;           // header
+    const m = /\*\*(.+?)\*\*/.exec(cells[0]);
+    if (m) answer = m[1];
+    if (!answer || cells.length < 5) continue;
+    const [, attempt, , at60, at50] = cells;
+    assert.strictEqual(answerMatches(attempt, [answer], 60), at60 === "yes",
+      "README row wrong at 60%: \"" + attempt + "\" vs \"" + answer + "\"");
+    assert.strictEqual(answerMatches(attempt, [answer], 50), at50 === "yes",
+      "README row wrong at 50%: \"" + attempt + "\" vs \"" + answer + "\"");
+    checked++;
+  }
+  ok("every documented example row matches the matcher (" + checked + " rows)", checked >= 20);
+})();
+(() => {
+  // the "how much must I say" table, re-derived with synthetic content words
+  const WORDS = "alpha bravo charlie delta echo foxtrot golf hotel".split(" ");
+  const need = (cell) => (/^all (\d+)$/.exec(cell) ? Number(/^all (\d+)$/.exec(cell)[1])
+                                                   : Number(/^(\d+) of \d+$/.exec(cell)[1]));
+  const rows = tableBetween("<!-- ANSWER-QUICK:START", "<!-- ANSWER-QUICK:END");
+  let checked = 0;
+  for (const cells of rows) {
+    if (!/^\d+$/.test(cells[0])) continue;                   // skip the header
+    const n = Number(cells[0]);
+    const answer = WORDS.slice(0, n).join(" ");
+    [[60, cells[1]], [50, cells[2]], [80, cells[3]]].forEach(([pct, cell]) => {
+      const k = need(cell);
+      ok("n=" + n + " at " + pct + "%: saying " + k + " is enough",
+         answerMatches(WORDS.slice(0, k).join(" "), [answer], pct) === true);
+      if (k > 1) {
+        ok("n=" + n + " at " + pct + "%: saying " + (k - 1) + " is not",
+           answerMatches(WORDS.slice(0, k - 1).join(" "), [answer], pct) === false);
+      }
+      checked++;
+    });
+  }
+  ok("the quick-reference table was checked (" + checked + " cells)", checked >= 20);
+})();
 
 // ---------------- version consistency ----------------
 (() => {
