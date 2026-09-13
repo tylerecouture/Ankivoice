@@ -123,6 +123,22 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   NFKD and drops combining marks (so "cafe" still matches "café"), and strips
   only punctuation ranges. Command matching runs through it on both sides, so a
   hypothesis that comes back as "Hard." matches the vocabulary word "hard".
+- **The spoken-answer length gate needs a voice.** `maxAnswerWords` is a crude
+  noise filter: without it, any stray speech on the question side would reveal
+  the card. But a rejection used to be completely silent — the flow just reopened
+  the microphone — so a user watching Voice test would see their answer heard and
+  then ignored, with no way to tell that a word count was the reason. It defaulted
+  to 3, which is shorter than a great many real answers ("Harry Potter and the
+  Goblet of Fire" is 7). v31 raised the default to 8, the ceiling to 20, and made
+  a length-only rejection report itself on screen. `answerAttempts()` returns the
+  rejected phrase alongside the accepted ones precisely so the UI can say why.
+- **A page reload destroys the evidence.** The recognizer's output is shown on the
+  question side, but showing the answer is a *new page* — so "Answer not
+  recognized", spoken on the answer side, used to arrive with no way to see what
+  had actually been misheard. The attempt already crossed the reload in
+  `av_attempt` for matching; v31 also renders it (`you said: ...`) on arrival.
+  That readout is forced visible even with Voice test off, because it exists to
+  explain a message the user is hearing regardless.
 - **Cookie budget is finite.** All the word lists share one ~4 KB cookie. Going
   over it used to fail silently and the settings reverted at the next app start
   (because `localStorage` dies with the port); `saveCfg()` now refuses and says

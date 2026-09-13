@@ -277,8 +277,17 @@ Partly caution — stray sounds can trigger a false reveal — but mostly it was
 broken. The recognizer returns several competing guesses, and until v29 they were
 mashed into one string before being compared to the answer, which matched nothing
 and also blew past the "max words" limit. It was switched off in v24 because it
-"didn't work"; v29 fixed the underlying bug, so it's worth another try if the
-idea appeals. Still off by default until it has real mileage on it.
+"didn't work"; v29 fixed the underlying bug and v31 fixed the limit that was
+still swallowing normal-length answers. Worth a try if the idea appeals — still
+off by default until it has real mileage on it.
+
+**I said the answer, the app clearly heard it, and nothing happened.**
+Fixed in v31. *Max words for answer match* caps how long a phrase can be and
+still count as an answer attempt; it used to default to **3**, so a four-word
+answer like "the Half Blood Prince" was dropped — and dropped *silently*, which
+looked exactly like being ignored. The default is now 8 (adjustable up to 20),
+and a phrase rejected only for length now says so on screen. If you still hit the
+cap, raise it in ⚙.
 
 **Could this be fixed properly?**
 Two upstream changes to AnkiDroid would help a lot: (1) add silence-length extras
