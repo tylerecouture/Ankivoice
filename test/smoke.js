@@ -94,6 +94,9 @@ async function boot(html, opts) {
   const cfg = Object.assign({ thinkDelayQuestionMs: 0, markMicDelayMs: 0, restartGapMs: 0 }, opts.cfg || {});
   win.localStorage.setItem("av_cfg", JSON.stringify(cfg));
   for (const [k, v] of Object.entries(opts.storage || {})) win.localStorage.setItem(k, v);
+  for (const [k, v] of Object.entries(opts.cookies || {})) {
+    win.document.cookie = k + "=" + encodeURIComponent(v) + ";path=/";
+  }
   win.eval(SRC);
   await wait(opts.settle == null ? 400 : opts.settle);
   return { win, state, doc: win.document };
@@ -110,9 +113,16 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     ok("the bar is injected", !!doc.getElementById("av-root"));
     ok("the gear is injected", !!doc.getElementById("av-gear"));
     ok("the question was read", state.spoken.join(" ").includes("Capital of Mali"));
-    ok("the command list was read on the first card", state.spoken.join(" ").includes("Voice commands"));
+    ok("the first card is greeted, not lectured", state.spoken.join(" ").includes("AnkiVoice is on"));
+    ok("the full command list is NOT read out unprompted", !state.spoken.join(" ").includes("Voice commands"));
+    ok("the greeting comes before the question", /AnkiVoice is on[\s\S]*Capital of Mali/.test(state.spoken.join(" ")));
     ok("the bar does not cover the card", /\d+px/.test(doc.body.style.paddingBottom));
     ok("the mic opened after the question", state.micStarts >= 1);
+
+    // "help" still reads the full list on demand
+    win.ankiSttResult(heard("help"));
+    await wait(300);
+    ok("help still lists every command", state.spoken.join(" ").includes("Voice commands"));
 
     // "answer" reveals, whichever hypothesis carries it
     win.ankiSttResult(heard("and sir", "answer"));
@@ -367,6 +377,40 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     await wait(400);
     ok("a failed tag read never rewrites tags", state.tagWrites.length === 0);
     ok("the card is still graded", state.graded[0] === 3);
+  }
+
+  // ---------- adding vocabulary survives a restart, and says so when empty ----
+  {
+    // localStorage is wiped by the port change on restart; the cookie is not.
+    // Simulate a restart by supplying ONLY the cookie.
+    const { win, doc } = await boot("<div>Q</div>", { cookies: { av_heard: JSON.stringify(["harv"]) } });
+    doc.getElementById("av-gear").dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+    await wait(20);
+    const panel = doc.getElementById("av-settings");
+    const hardRow = [...panel.querySelectorAll("div")]
+      .find((d) => d.firstChild && d.firstChild.textContent === "Extra words \u2192 Hard");
+    const texts = [...hardRow.querySelectorAll("span")].map((c) => c.textContent);
+    ok("heard words survive a restart via the cookie", texts.indexOf("+ harv") >= 0);
+  }
+  {
+    // and with nothing heard, the panel explains where words come from rather
+    // than silently offering no way to add any
+    const { win, doc } = await boot("<div>Q</div>");
+    doc.getElementById("av-gear").dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+    await wait(20);
+    const panel = doc.getElementById("av-settings");
+    const hardRow = [...panel.querySelectorAll("div")]
+      .find((d) => d.firstChild && d.firstChild.textContent === "Extra words \u2192 Hard");
+    ok("the empty state explains itself", hardRow.textContent.indexOf("nothing new heard yet") >= 0);
+    ok("removal chips are still there", [...hardRow.querySelectorAll("span")].some((c) => /^hard\s/.test(c.textContent)));
+  }
+  {
+    // a word heard while reviewing is written to the durable store
+    const { win, state } = await boot("<div>Q</div>");
+    win.ankiSttResult(heard("harvey"));
+    await wait(60);
+    ok("a heard word reaches the cookie", win.document.cookie.indexOf("av_heard") >= 0);
+    ok("...and includes the word", decodeURIComponent(win.document.cookie).indexOf("harvey") >= 0);
   }
 
   // ---------- every setting is reachable without a keyboard ----------

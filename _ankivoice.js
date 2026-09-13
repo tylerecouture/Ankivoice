@@ -3,11 +3,20 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 33
+   VERSION: 35
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v35 - fixes the settings chips being able to DELETE vocabulary but never
+           add any: the recently-heard words are now kept in a cookie, so they
+           survive an app restart instead of being wiped with localStorage, and
+           when there are none the panel says where new words come from instead
+           of showing nothing at all.
+     v34 - the first card of a session no longer reads out every voice command.
+           It just says "AnkiVoice is on. Say help, to list the voice commands
+           available." before the question. "Help" still reads the full list
+           whenever you ask for it.
      v33 - new, OFF by default: "Remember answers". Say an answer it doesn't
            accept, then grade the card Hard/Good/Easy anyway, and it offers to
            remember that phrase for this card in future. Stored as a tag on the
@@ -119,7 +128,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 33;
+  var AV_VERSION = 35;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -454,8 +463,14 @@
   }
   // Recently heard words, kept so the settings panel can offer one-tap "add this
   // mis-hear" chips - typing into the panel is unreliable in AnkiDroid's WebView.
+  // Cookie first, then localStorage - same reason as the settings: the media
+  // server's port changes every launch, which orphans localStorage. Keeping the
+  // heard words only there meant every "+ word" suggestion vanished on restart,
+  // leaving the settings panel able to REMOVE vocabulary but never add any.
   function recentHeard() {
-    try { var a = JSON.parse(lsGet("av_heard_recent") || "[]"); if (isArr(a)) return a; } catch (e) {}
+    var raw = getCookie("av_heard");
+    if (!raw) raw = lsGet("av_heard_recent");
+    try { var a = JSON.parse(raw || "[]"); if (isArr(a)) return a; } catch (e) {}
     return [];
   }
   function rememberHeard(hyps) {
@@ -471,7 +486,9 @@
       for (i = 0; i < pool.length && keep.length < 24; i++) {
         if (pool[i] && !seen[pool[i]]) { seen[pool[i]] = 1; keep.push(pool[i]); }
       }
-      lsSet("av_heard_recent", JSON.stringify(keep));
+      var json = JSON.stringify(keep);
+      lsSet("av_heard_recent", json);
+      setCookie("av_heard", JSON.stringify(keep.slice(0, 16)));   // small, and it survives restarts
     } catch (e) {}
   }
   function readAttempts() {
@@ -530,6 +547,10 @@
     } catch (e) { return ""; }
   }
 
+  // Spoken once per session, in place of the full command list. Reading out every
+  // command before the first card was a long thing to sit through when you
+  // already know them; "help" still gives the full list whenever you want it.
+  var AV_GREETING = "AnkiVoice is on. Say help, to list the voice commands available.";
   function commandsText(onAns) {
     if (onAns) return "Mark it: again, hard, good, or easy.";
     return "Voice commands. Say answer, to reveal the answer." +
@@ -796,7 +817,9 @@
             lsSet("av_attempt", "");            // clear any stale answer attempt
             var qDone = lsGet("av_qdone") === "1";
             lsSet("av_qdone", "1");
-            await speak(mainText + (qDone ? "" : " . . . " + commandsText(false)));
+            // The greeting leads, since it announces the session rather than
+            // commenting on the card that was just read.
+            await speak((qDone ? "" : AV_GREETING + " . . . ") + mainText);
             thinkMs = CFG.thinkDelayQuestionMs;
           }
         } else {
@@ -1081,12 +1104,18 @@
                 chipsAdd.appendChild(c);
               })(recent[i]);
             }
+            var lbl = document.createElement("span");
+            lbl.style.cssText = "opacity:.6;font-size:13px;margin-right:2px;";
             if (shown) {
-              var lbl = document.createElement("span");
-              lbl.textContent = "heard recently:";
-              lbl.style.cssText = "opacity:.6;font-size:13px;margin-right:2px;";
-              chipsAdd.insertBefore(lbl, chipsAdd.firstChild);
+              lbl.textContent = "heard recently \u2014 tap to add:";
+            } else {
+              // Rendering nothing here was the whole problem: the panel looked
+              // like it could only delete words, with no hint where new ones come
+              // from.
+              lbl.textContent = "nothing new heard yet \u2014 say a word while reviewing " +
+                "and it appears here to add.";
             }
+            chipsAdd.insertBefore(lbl, chipsAdd.firstChild);
           };
         })(s.k);
         inp.__chips = renderChips;
