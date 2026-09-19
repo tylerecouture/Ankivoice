@@ -3,11 +3,16 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 35
+   VERSION: 36
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v36 - the offer to remember an unrecognised answer now comes BEFORE the
+           grading cue, so it appears whether you grade by voice or by tapping
+           the buttons (the buttons are native Android UI the card cannot see,
+           so waiting for a spoken grade meant button users never got asked).
+           The prompt no longer ends with "Say yes, or no."
      v35 - fixes the settings chips being able to DELETE vocabulary but never
            add any: the recently-heard words are now kept in a cookie, so they
            survive an app restart instead of being wiped with localStorage, and
@@ -128,7 +133,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 35;
+  var AV_VERSION = 36;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -625,7 +630,7 @@
     var myGen = ++window.__avGen;
     function dead() { return myGen !== window.__avGen; }
     var mainText = "", onAnswer = false, tries = 0, noMatch = 0, listening = false;
-    var unmatched = "", pendingGrade = null;   // a spoken answer we could offer to remember
+    var unmatched = "", askingRemember = false;   // an answer we could offer to remember
 
     try { if (api) api.ankiSttStop(); } catch (e) {}   // stop any mic left over from a previous flow
 
@@ -678,13 +683,22 @@
     }
 
     // "Again" means you got it wrong, so there is nothing worth remembering.
-    async function maybeRemember(ease, label) {
-      if (!CFG.rememberAnswers || !unmatched || ease === 1) return grade(ease, label);
-      pendingGrade = { ease: ease, label: label };
-      S("Remember \"" + unmatched + "\"? \u2014 say yes or no");
-      await speak("Should I remember, " + unmatched + ", as a right answer for this card? Say yes, or no.");
+    // Speak the grading cue and open the microphone. Split out because the
+    // "remember this answer?" round now runs before it.
+    async function gradeCue() {
+      var aDone = lsGet("av_adone") === "1";
+      lsSet("av_adone", "1");
+      await speak(aDone ? "Mark it." : commandsText(true));
       if (dead()) return;
-      return listen();
+      var ms = CFG.markMicDelayMs;
+      if (ms >= 1000) {
+        if (!(await countdown(ms, "Get ready"))) return;
+      } else if (ms > 0) {
+        S("Get ready\u2026 \u2014 tap to turn off");
+        await sleep(ms);
+        if (dead()) return;
+      }
+      listen();
     }
 
     async function grade(ease, label) {
@@ -716,9 +730,9 @@
           await speak("Microphone permission is missing.");
           return;
         }
-        if (pendingGrade) {                            // no reply to "remember this?"
-          var pgs = pendingGrade; pendingGrade = null;
-          return grade(pgs.ease, pgs.label);
+        if (askingRemember) {                          // no reply to "remember this?"
+          askingRemember = false;
+          return gradeCue();
         }
         if (++tries >= CFG.maxListenTries) return pauseMic("silence");
         await sleep(CFG.restartGapMs);
@@ -735,17 +749,17 @@
       if (CFG.voiceTest) showHeard("heard:  " + hyps.join("   |   "));   // show, but keep working normally
       S("heard: " + (hyps[0] || ""));   // full list goes to the voice-test bar
       var matched = function (key) { if (!said(hyps, key)) return false; noMatch = 0; return true; };
-      if (pendingGrade) {
+      if (askingRemember) {
         // Answering the "should I remember this?" prompt. Anything that is not a
-        // clear yes just grades the card - never leave it hanging on a mishear.
-        var pg = pendingGrade; pendingGrade = null;
+        // clear yes just moves on - never leave the card hanging on a mishear.
+        askingRemember = false;
         if (said(hyps, "yes")) {
           var saved = await rememberAnswer(api, unmatched);
           if (dead()) return;
           await speak(saved ? "Saved." : "Sorry, I could not save that.");
           if (dead()) return;
         }
-        return grade(pg.ease, pg.label);
+        return gradeCue();
       }
       if (matched("stop")) { paused = true; letSleep(); S("Paused \u2014 tap to listen again"); return; }
       if (matched("off")) { lsSet("av_on", "0"); stopFlow(); paintOff(); try { if (api) api.ankiTtsSpeak("Voice off."); } catch (e) {} return; }
@@ -779,10 +793,10 @@
       } else {
         // Grade words are only matched on the answer side, so these homophones are
         // safe: they're what the recognizer tends to hear for the intended grade.
-        if (matched("easy")) return maybeRemember(4, "easy");
-        if (matched("hard")) return maybeRemember(2, "hard");
+        if (matched("easy")) return grade(4, "easy");
+        if (matched("hard")) return grade(2, "hard");
         if (matched("again")) return grade(1, "again");
-        if (matched("good")) return maybeRemember(3, "good");
+        if (matched("good")) return grade(3, "good");
       }
       // Heard something, recognised nothing. A television or a conversation in the
       // room produces these indefinitely, so they must count towards the auto-pause
@@ -850,8 +864,6 @@
               return;
             }
 
-            var aDone = lsGet("av_adone") === "1";
-            lsSet("av_adone", "1");
             if (CFG.detectAnswer && attempts.length) {
               unmatched = attempts[0];                            // may be worth remembering
               await speak("Answer not recognized.");              // attempted but no match
@@ -859,8 +871,18 @@
             }
             await speak(mainText);                                // read the answer
             if (dead()) return;
-            await speak(aDone ? "Mark it." : commandsText(true)); // distinct grade cue
-            thinkMs = CFG.markMicDelayMs;
+            if (CFG.rememberAnswers && unmatched) {
+              // Asked before the grade, deliberately. The answer buttons are
+              // native Android UI outside the WebView, so the card cannot tell
+              // whether - or how - you tapped. Waiting for a SPOKEN grade meant
+              // the offer never appeared for anyone using the buttons.
+              askingRemember = true;
+              S("Remember \"" + unmatched + "\"?");
+              await speak("Should I remember, " + unmatched + ", as a right answer for this card?");
+              if (dead()) return;
+              return listen();                                    // continues in gradeCue()
+            }
+            return gradeCue();
           }
         }
         if (dead()) return;

@@ -2,7 +2,25 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v35**
+Current: **v36**
+
+## v36
+
+The offer to remember an unrecognised answer now comes **before** the grading
+cue, instead of after a spoken grade.
+
+It previously waited until you said "hard", "good" or "easy", which meant it
+never appeared if you graded by tapping the buttons. AnkiDroid's answer buttons
+are native Android UI outside the card's WebView, and the JS API has no callback
+for them, so the card genuinely cannot tell that you tapped - or which button.
+Asking first is the only way the offer can work regardless of how you grade.
+
+One consequence worth knowing: because the question now comes before the grade,
+saying yes records the phrase even if you then mark the card Again. The question
+is effectively "was that right?", so answer it as such. Deleting the tag undoes
+it.
+
+The prompt also no longer ends with "Say yes, or no."
 
 ## v35
 

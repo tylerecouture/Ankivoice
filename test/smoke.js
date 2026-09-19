@@ -293,26 +293,26 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
       av_adone: "1",
     },
   }, extra || {});
+  const BACK = '<div>Which book?</div><hr id="answer"><div>Bamako</div>';
 
   {
     // default: never touches tags, never asks
-    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
-      backWithAttempt());
-    await wait(300);
-    win.ankiSttResult(heard("good"));
+    const { state } = await boot(BACK, backWithAttempt());
     await wait(400);
     ok("off by default: no prompt", !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
-    ok("off by default: card is graded straight away", state.graded[0] === 3);
     ok("off by default: tags are never even read", state.tagReads === 0 && state.added.length === 0);
+    ok("off by default: it goes straight to the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
   }
   {
-    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+    const { win, state } = await boot(BACK,
       backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true }, tags: ["leech"] }));
-    await wait(300);
-    win.ankiSttResult(heard("good"));
     await wait(400);
-    ok("it offers to remember the phrase", state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
-    ok("and holds off grading until answered", state.graded.length === 0);
+    ok("the offer comes BEFORE grading, not after a spoken grade",
+       state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("so it does not depend on how you grade", !state.spoken.some((t) => t.indexOf("Mark it") >= 0));
+    ok("and it no longer tells you to say yes or no",
+       !state.spoken.some((t) => t.indexOf("Say yes") >= 0 || t.indexOf("say yes") >= 0));
+
     win.ankiSttResult(heard("yes"));
     await wait(400);
     ok("yes adds one tag", state.added.length === 1);
@@ -320,44 +320,53 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     ok("it uses the additive call, never a wholesale rewrite", state.tagWrites.length === 0);
     ok("existing tags are untouched", state.tags.indexOf("leech") >= 0);
     ok("it confirms out loud", state.spoken.indexOf("Saved.") >= 0);
-    ok("and then grades the card", state.graded[0] === 3);
+    ok("then it asks for the grade as usual", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
+    ok("and grading still works afterwards", state.graded.length === 0);
+    win.ankiSttResult(heard("good"));
+    await wait(400);
+    ok("the card grades normally", state.graded[0] === 3);
   }
   {
-    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+    const { win, state } = await boot(BACK,
       backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
-    await wait(300);
-    win.ankiSttResult(heard("hard"));
     await wait(400);
     win.ankiSttResult(heard("no"));
     await wait(400);
     ok("no writes nothing", state.added.length === 0 && state.tagWrites.length === 0);
-    ok("but still grades", state.graded[0] === 2);
+    ok("but still reaches the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
   }
   {
-    // silence at the prompt must not strand an ungraded card
-    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+    // silence at the prompt must not strand the card
+    const { win, state } = await boot(BACK,
       backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
-    await wait(300);
-    win.ankiSttResult(heard("easy"));
     await wait(400);
     win.ankiSttResult(silence());
     await wait(400);
-    ok("no reply still grades the card", state.graded[0] === 4);
+    ok("no reply still reaches the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
     ok("and saves nothing", state.added.length === 0);
+    win.ankiSttResult(heard("easy"));
+    await wait(400);
+    ok("and the card can still be graded", state.graded[0] === 4);
   }
   {
-    // "again" means you were wrong - nothing worth remembering
-    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
-      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
-    await wait(300);
-    win.ankiSttResult(heard("again"));
+    // a recognised answer is never offered - there is nothing to teach
+    const { state } = await boot(BACK, {
+      onAnswer: true,
+      cfg: { detectAnswer: true, rememberAnswers: true },
+      storage: {
+        av_qlines: JSON.stringify(["Which book?"]),
+        av_attempt: JSON.stringify(["bamako"]),
+        av_adone: "1",
+      },
+    });
     await wait(400);
-    ok("Again never offers to remember", !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
-    ok("Again just grades", state.graded[0] === 1);
+    ok("a matched answer is never offered for saving",
+       !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("it just says Correct", state.spoken.indexOf("Correct.") >= 0);
   }
   {
     // a tag saved earlier makes the same answer count next time
-    const { state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+    const { state } = await boot(BACK,
       backWithAttempt({
         cfg: { detectAnswer: true, rememberAnswers: true },
         tags: ["AnkiVoice::ok::the-goblet-of-fire"],
@@ -368,15 +377,13 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
   }
   {
     // a broken tag read must never lead to a write
-    const { win, state } = await boot('<div>Which book?</div><hr id="answer"><div>Bamako</div>',
+    const { win, state } = await boot(BACK,
       backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true }, tagsBroken: true }));
-    await wait(300);
-    win.ankiSttResult(heard("good"));
     await wait(400);
     win.ankiSttResult(heard("yes"));
     await wait(400);
     ok("a failed tag read never rewrites tags", state.tagWrites.length === 0);
-    ok("the card is still graded", state.graded[0] === 3);
+    ok("and it still reaches the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
   }
 
   // ---------- adding vocabulary survives a restart, and says so when empty ----

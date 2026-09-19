@@ -218,16 +218,23 @@ Two things fall out of that worth knowing:
 
 **Off by default.** Turn on **Remember answers (adds tags)** in settings to use it.
 
-When you say something the plugin doesn't accept, it reads the answer out as
-usual. If you then grade the card **Hard, Good or Easy** — i.e. you decided you
-were actually right — it asks:
+When you say something the plugin doesn't accept, it reads the answer out and
+then asks, **before** you grade the card:
 
 > "Should I remember, *the goblet of fire*, as a right answer for this card? Say
 > yes, or no."
 
 Say **yes** and that phrase is accepted for this card from then on. Say **no**,
-say nothing, or say anything it doesn't understand, and it just grades the card
-and moves on. Grading **Again** never asks, since that means you got it wrong.
+say nothing, or say anything it doesn't understand, and it moves straight on to
+the grading cue. Either way you then grade the card normally — by voice or by
+tapping the buttons.
+
+It asks before you grade rather than after, because AnkiDroid's answer buttons
+are native Android UI outside the card's WebView: the plugin cannot tell that you
+tapped one, or which one. Asking first is the only way the offer works whether
+you grade by voice or by hand. The flip side is that **saying yes records the
+phrase even if you then mark the card Again** — treat the question as "was that
+right?", and delete the tag if you change your mind.
 
 **Where it is stored, and what that means for you:**
 
