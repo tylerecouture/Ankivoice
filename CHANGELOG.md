@@ -2,7 +2,35 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v36**
+Current: **v37**
+
+## v37
+
+Two fixes, both reported from the device.
+
+**Remember answers no longer asks about wrong ones.** v36 moved the question
+ahead of grading so that it would reach people who grade with the buttons - but
+that meant it asked about *every* unrecognised answer, most of which were simply
+wrong. Reverted, and replaced with something that works for both:
+
+- **Voice:** asked only after a spoken Hard, Good or Easy. Never after Again.
+- **Buttons:** a green "I was right - remember ..." button appears on screen when
+  an answer wasn't recognised. Tap it if you were right, then grade as usual. It
+  is silent, so a wrong answer costs nothing: you just don't tap it.
+
+A separate button is needed because AnkiDroid's grade buttons are native Android
+UI outside the card's page and the JS API has no callback for them, so the card
+can never learn that you tapped Good. Having used the button, you are not asked
+again by voice.
+
+**Improved defaults now actually reach you.** Saving settings used to write
+*every* value, defaults included. So anyone who had saved anything on v30 or
+earlier had `maxAnswerWords: 3` frozen into their settings, and the v31 change of
+that default to 8 never applied - which is why "it is the end of work" was still
+rejected as "6 words, max 3". Settings are now saved sparsely (only what differs
+from the defaults, plus a format marker), and settings saved the old way have that
+stale 3 recognised as the old default and dropped. A 3 you choose from now on is
+kept.
 
 ## v36
 

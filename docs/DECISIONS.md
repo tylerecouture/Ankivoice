@@ -172,6 +172,24 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   `av_attempt` for matching; v31 also renders it (`you said: ...`) on arrival.
   That readout is forced visible even with Voice test off, because it exists to
   explain a message the user is hearing regardless.
+- **Never save a default.** Until v37, saving settings wrote every value,
+  defaults included. That froze each default at whatever it was on the day the
+  user first saved anything: the spoken-answer word limit went from 3 to 8 in
+  v31, and people who had saved settings on v30 kept getting "max 3" for weeks.
+  Settings are now stored sparsely (only what differs from `CFG_DEFAULTS`, plus a
+  `_cfgv` marker), so improved defaults reach everyone who hasn't overridden
+  them. For blobs saved the old way (no marker), a value equal to an entry in
+  `AV_OLD_DEFAULTS` is treated as the stale default it almost certainly is and
+  dropped. **When you change a default, add its old value to `AV_OLD_DEFAULTS`.**
+- **The card cannot see the grade buttons, so don't design as if it could.**
+  AnkiDroid's answer buttons are native UI outside the WebView and the JS API
+  has no answer callback. v36 worked around that by asking "should I remember
+  this?" *before* grading, which asked about every wrong answer - a worse
+  experience than not offering at all, and reverted in v37. What works: ask voice
+  graders after a positive *spoken* grade, and give button graders a control the
+  card *can* see - its own "I was right" button, silent, ignorable. General rule:
+  when the platform hides an event, add an affordance the user can choose to
+  use, rather than guessing and interrupting.
 - **Anything the user must be able to edit has to outlive the port.** The
   editable vocabulary was made keyboard-free with chips in v29, but the list of
   recently-heard words that feeds the "+ word" suggestions was left in

@@ -218,23 +218,26 @@ Two things fall out of that worth knowing:
 
 **Off by default.** Turn on **Remember answers (adds tags)** in settings to use it.
 
-When you say something the plugin doesn't accept, it reads the answer out and
-then asks, **before** you grade the card:
+When you say something the plugin doesn't accept, it reads the answer out as
+usual. What happens next depends on how you grade — and it **never** asks about
+an answer you mark wrong:
 
-> "Should I remember, *the goblet of fire*, as a right answer for this card? Say
-> yes, or no."
+- **Grading by voice:** say **Hard, Good or Easy** and it asks
+  > "Should I remember, *the goblet of fire*, as a right answer for this card?"
 
-Say **yes** and that phrase is accepted for this card from then on. Say **no**,
-say nothing, or say anything it doesn't understand, and it moves straight on to
-the grading cue. Either way you then grade the card normally — by voice or by
-tapping the buttons.
+  Say **yes** and that phrase counts for this card from then on. Say no, say
+  nothing, or say something it can't make out, and it just grades the card. Say
+  **Again** and it doesn't ask at all.
+- **Grading with the buttons:** a green **"✓ I was right — remember “the
+  goblet of fire”"** button appears above the bar. If you were right, tap it,
+  then tap Good (or Hard/Easy) as usual. If you were wrong, ignore it. It never
+  speaks and never asks, so wrong answers cost you nothing.
 
-It asks before you grade rather than after, because AnkiDroid's answer buttons
-are native Android UI outside the card's WebView: the plugin cannot tell that you
-tapped one, or which one. Asking first is the only way the offer works whether
-you grade by voice or by hand. The flip side is that **saying yes records the
-phrase even if you then mark the card Again** — treat the question as "was that
-right?", and delete the tag if you change your mind.
+Why a separate button for button users: AnkiDroid's grade buttons are native
+Android UI outside the card's page, and its JavaScript API has no callback for
+them — the plugin genuinely cannot see that you tapped Good. So it can't wait for
+your grade and then ask. (v36 tried asking *before* grading instead, which meant
+being asked about every wrong answer. It was reverted.)
 
 **Where it is stored, and what that means for you:**
 
