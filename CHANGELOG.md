@@ -2,7 +2,25 @@
 
 Versions are tracked in the header of `_ankivoice.js` and mirrored here.
 
-Current: **v37**
+Current: **v38**
+
+## v38
+
+**Spelling differences no longer make a right answer wrong.** Reported: "Billy
+Elliot" was rejected because the recognizer wrote what was said as "billy
+elliott", with two t's. It has to pick *one* spelling - American for en-US, and
+an arbitrary one for names - and the card may use another. Answers now forgive
+doubled letters (Elliott/Elliot, Phillip/Philip, Matthew/Mathew) and British
+versus American spellings (colour/color, theatre/theater, realise/realize,
+catalogue/catalog, programme/program, grey/gray).
+
+Deliberately *not* forgiven: one letter swapped for another. In a geography deck
+the classic wrong answers are exactly one letter from the right ones -
+Gambia/Zambia, Iceland/Ireland, Iran/Iraq, Mali/Bali - which is as close as
+Elliott is to Elliot. A general "close enough" rule would have marked those
+Correct, and a false Correct silently grades the card Good. The known cost of the
+doubled-letter rule is that a few different-sounding words now match
+(diner/dinner, later/latter), which are unlikely to be said by mistake.
 
 ## v37
 

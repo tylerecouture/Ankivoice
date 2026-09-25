@@ -172,6 +172,19 @@ verified by reading the AnkiDroid source (branch `v2.24.0`).
   `av_attempt` for matching; v31 also renders it (`you said: ...`) on arrival.
   That readout is forced visible even with Voice test off, because it exists to
   explain a message the user is hearing regardless.
+- **Forgive spellings, never edit distance.** The recognizer must commit to one
+  spelling of what it heard (American for en-US, arbitrary for names), so a right
+  answer can arrive spelled differently from the card ("billy elliott" for "Billy
+  Elliot"). The tempting fix, accepting words within one edit, is wrong for this
+  product: in a geography deck the classic *wrong* answers are one edit from the
+  right ones (Gambia/Zambia, Iceland/Ireland, Iran/Iraq, Mali/Bali), exactly as
+  close as Elliott/Elliot, so the two cases cannot be told apart by distance.
+  `spellKey()` instead forgives only differences that do not change the spoken
+  word: collapsed doubled letters and a short list of British/American endings,
+  each gated on word length so short words (four/tour, acre, rise) are untouched.
+  Known cost, pinned in the tests: different-sounding words differing only by a
+  doubled letter now match (diner/dinner). If you extend `spellKey`, add the new
+  rule's worst-case wrong answer to the must-reject list in `test/test.js`.
 - **Never save a default.** Until v37, saving settings wrote every value,
   defaults included. That froze each default at whatever it was on the day the
   user first saved anything: the spoken-answer word limit went from 3 to 8 in

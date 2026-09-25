@@ -158,6 +158,21 @@ Only relevant when **Detect spoken answers** is on. Two rules decide it:
 Filler words don't count toward any of this. "The United States of America" is
 three *content* words: united, states, america.
 
+**Spelling differences are forgiven, but only some.** The recognizer has to write
+what you said using *one* spelling — American, for the default en-US — and it
+often won't match your card. So these count as the same word:
+
+- doubled letters: *Elliott / Elliot*, *Phillip / Philip*, *Matthew / Mathew*
+- British and American spellings: *colour / color*, *theatre / theater*,
+  *realise / realize*, *catalogue / catalog*, *programme / program*, *grey / gray*
+
+What is **not** forgiven is one letter swapped for another — on purpose. The
+classic wrong answers in a geography deck are exactly that close to the right
+ones: *Gambia / Zambia*, *Iceland / Ireland*, *Iran / Iraq*, *Mali / Bali*. A
+general "close enough" rule would mark those Correct. The price of the doubled-
+letter rule is that a few different-sounding words now match (*diner / dinner*,
+*later / latter*) — an unlikely thing to say by mistake.
+
 <!-- ANSWER-CASES:START (generated from the matcher; test/test.js checks these rows) -->
 | The card's answer | You say | Content words you covered | Accepted at 60% (default) | at 50% |
 |---|---|---|---|---|

@@ -17,7 +17,7 @@ function grab(n){const s=src.indexOf("function "+n+"(");const o=src.indexOf("{",
 for(;i<src.length;i++){if(src[i]==="{")d++;else if(src[i]==="}"&&--d===0){i++;break;}}return src.slice(s,i);}
 function grabVar(n){return src.match(new RegExp("var "+n+" = [\\s\\S]*?;\\n"))[0];}
 eval(grabVar("AV_PUNCT")); eval(grabVar("AV_STOPWORDS"));
-eval(grab("normalize")); eval(grab("contentWords")); eval(grab("hasAll")); eval(grab("answerMatches"));
+eval(grab("normalize")); eval(grab("spellKey")); eval(grab("contentWords")); eval(grab("hasAll")); eval(grab("answerMatches"));
 
 const yn = (b) => (b ? "yes" : "no");
 const groups = [

@@ -3,11 +3,15 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 37
+   VERSION: 38
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v38 - spelling differences no longer make a right answer wrong: doubled
+           letters (Elliott/Elliot) and British/American spellings
+           (colour/color, theatre/theater) now match. One letter swapped for
+           another still does not, so Gambia/Zambia and Iran/Iraq stay wrong.
      v37 - "Remember answers" no longer asks about wrong answers: voice
            graders are asked only after a spoken Hard/Good/Easy, and button
            graders get a silent "I was right - remember" button instead of a
@@ -140,7 +144,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 37;
+  var AV_VERSION = 38;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -392,11 +396,29 @@
     their:1, them:1, they:1, this:1, to:1, was:1, we:1, were:1, with:1, you:1,
     your:1
   };
+  // Spelling differences that do not change the spoken word. The recognizer has
+  // to pick ONE spelling - American for en-US, and an arbitrary one for names -
+  // so "Billy Elliott" was never going to match a card saying "Billy Elliot".
+  // Deliberately narrow, and deliberately NOT edit distance: in a geography deck
+  // the classic wrong answers are one letter from the right ones (Gambia/Zambia,
+  // Iceland/Ireland, Iran/Iraq, Mali/Bali), exactly as close as Elliott/Elliot,
+  // and a false match here silently grades a wrong answer Good. So only doubled
+  // letters and British/American spellings are forgiven; swapping one letter for
+  // another never is. Applied to both sides, so it only has to be consistent.
+  function spellKey(w) {
+    if (w === "grey") w = "gray";
+    if (w.length >= 6) w = w.replace(/our$/, "or");                            // colour -> color
+    if (w.length >= 5) w = w.replace(/([^aeiou])re$/, "$1er");                 // theatre -> theater
+    if (w.length >= 6) w = w.replace(/is(e|ed|es|ing|ation|ations)$/, "iz$1"); // realise -> realize
+    if (w.length >= 7) w = w.replace(/ogue$/, "og");                           // catalogue -> catalog
+    if (w.length >= 8) w = w.replace(/mme$/, "m");                             // programme -> program
+    return w.replace(/([a-z])\1+/g, "$1");                                    // elliott -> eliot
+  }
   function contentWords(s) {
     var raw = normalize(s).split(" "), out = [], i;
-    for (i = 0; i < raw.length; i++) if (raw[i] && !AV_STOPWORDS[raw[i]]) out.push(raw[i]);
+    for (i = 0; i < raw.length; i++) if (raw[i] && !AV_STOPWORDS[raw[i]]) out.push(spellKey(raw[i]));
     // An answer that is nothing but filler ("the") still has to be matchable.
-    if (!out.length) for (i = 0; i < raw.length; i++) if (raw[i]) out.push(raw[i]);
+    if (!out.length) for (i = 0; i < raw.length; i++) if (raw[i]) out.push(spellKey(raw[i]));
     return out;
   }
   function hasAll(hay, needles) {

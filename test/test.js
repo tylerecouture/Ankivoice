@@ -53,6 +53,7 @@ eval(grab("extractLines"));
 eval(grab("speechJoin"));
 eval(grab("subtractLines"));
 eval(grab("normalize"));
+eval(grab("spellKey"));
 eval(grab("contentWords"));
 eval(grab("hasAll"));
 eval(grab("answerMatches"));
@@ -173,6 +174,37 @@ eq("two of three content words clears 60%",
   ok("...and at 20, just above its 17%", answerMatches("guinea", flag, 20) === false);
   ok("...but 10 lets it through, as the setting promises", answerMatches("guinea", flag, 10) === true);
 })();
+
+// ---------------- spelling variants of the same spoken word (v38) ----------------
+// The recognizer has to pick one spelling; the card may use another. Reported
+// case: "billy elliott" was rejected for "Billy Elliot".
+[
+  ["billy elliott", "Billy Elliot"],            // the reported case: doubled letter
+  ["phillip", "Philip"], ["mathew", "Matthew"], ["alan", "Allan"],
+  ["the color purple", "The Colour Purple"],    // -our / -or
+  ["national theater", "National Theatre"],     // -re / -er
+  ["realize", "Realise"], ["organization", "Organisation"],   // -ise / -ize
+  ["catalog", "Catalogue"], ["program", "Programme"], ["gray", "Grey"],
+].forEach(([said, card]) =>
+  ok("spelling variant accepted: \"" + said + "\" for \"" + card + "\"", answerMatches(said, [card]) === true));
+
+// ...but NOT by edit distance. In a geography deck the classic wrong answers are
+// exactly as close to the right ones as Elliott is to Elliot, and a false match
+// silently grades a wrong answer Good. These must stay rejected.
+[
+  ["gambia", "Zambia"], ["iceland", "Ireland"], ["iran", "Iraq"], ["mali", "Bali"],
+  ["slovakia", "Slovenia"], ["austria", "Australia"], ["niger", "Nigeria"],
+  ["sweden", "Swedes"], ["four", "Tour"],
+].forEach(([said, card]) =>
+  ok("one-letter-different WRONG answer rejected: \"" + said + "\" for \"" + card + "\"",
+     answerMatches(said, [card]) === false));
+
+// The known, accepted cost: different words that differ only by a doubled letter
+// now match too. They SOUND different, so answering one for the other is an
+// unlikely quiz mistake - unlike Gambia/Zambia. Pinned here so it stays a
+// conscious choice rather than a surprise.
+ok("known cost: diner matches Dinner", answerMatches("diner", ["Dinner"]) === true);
+eq("spellKey leaves short words alone", [spellKey("four"), spellKey("acre"), spellKey("rise")], ["four", "acre", "rise"]);
 
 // The recognizer returns competing hypotheses. Each must be tested on its own:
 // concatenating them (pre-v29) produced a phrase that matched nothing.
