@@ -32,6 +32,11 @@ function ok(label, cond) { assert.ok(cond, "FAILED: " + label); passed++; consol
 
 // --- a fake AnkiDroid JS API that records what the plugin asked for ----------
 function makeApi(state) {
+  const Api = makeApiClass(state);
+  if (state.noAddTag) delete Api.prototype.ankiAddTagToNote;   // an older/newer build without it
+  return Api;
+}
+function makeApiClass(state) {
   const reply = (v) => Promise.resolve({ success: true, value: String(v) });
   return class AnkiDroidJS {
     constructor() { state.constructed = true; }
@@ -77,7 +82,7 @@ async function boot(html, opts) {
     spoken: [], graded: [], micStarts: 0, showAnswer: 0, buried: 0,
     speaking: false, onAnswer: !!opts.onAnswer, errors: [],
     nid: "1234", tags: (opts.tags || []).slice(), tagWrites: [], added: [],
-    tagReads: 0, tagsBroken: !!opts.tagsBroken,
+    tagReads: 0, tagsBroken: !!opts.tagsBroken, noAddTag: !!opts.noAddTag,
   };
   const dom = new JSDOM("<!doctype html><html><body>" + html + "</body></html>", {
     url: "http://127.0.0.1:41234/",
@@ -91,7 +96,11 @@ async function boot(html, opts) {
   win.addEventListener("unhandledrejection", (e) => state.errors.push("rejection: " + e.reason));
   // Real timings make the suite sleep for minutes; the delays themselves are not
   // what this test is checking.
-  const cfg = Object.assign({ thinkDelayQuestionMs: 0, markMicDelayMs: 0, restartGapMs: 0 }, opts.cfg || {});
+  // _cfgv marks these as deliberate, current-format settings. opts.legacyCfg
+  // writes a pre-v37 blob instead (no marker, every value dumped).
+  const cfg = opts.legacyCfg
+    ? Object.assign({}, opts.legacyCfg)
+    : Object.assign({ _cfgv: 2, thinkDelayQuestionMs: 0, markMicDelayMs: 0, restartGapMs: 0 }, opts.cfg || {});
   win.localStorage.setItem("av_cfg", JSON.stringify(cfg));
   for (const [k, v] of Object.entries(opts.storage || {})) win.localStorage.setItem(k, v);
   for (const [k, v] of Object.entries(opts.cookies || {})) {
@@ -270,7 +279,9 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     const remove = [...hardRow.querySelectorAll("span")].find((c) => c.textContent.indexOf("harv ") === 0);
     remove.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
     await wait(20);
-    ok("tapping it again removes the word", JSON.parse(win.localStorage.getItem("av_cfg")).words_hard.indexOf("harv") < 0);
+    const wh = JSON.parse(win.localStorage.getItem("av_cfg")).words_hard;
+    // back to the default list, so (since v37) it is simply not stored any more
+    ok("tapping it again removes the word", !wh || wh.indexOf("harv") < 0);
     ok("the settings are written to the cookie too", win.document.cookie.indexOf("av_cfg=") >= 0);
     ok("no errors while editing settings", state.errors.length === 0);
 
@@ -294,25 +305,35 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     },
   }, extra || {});
   const BACK = '<div>Which book?</div><hr id="answer"><div>Bamako</div>';
+  const ON = { detectAnswer: true, rememberAnswers: true };
+  const asked = (state) => state.spoken.some((t) => t.indexOf("Should I remember") >= 0);
+  const tap = (win, el) => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
 
   {
-    // default: never touches tags, never asks
-    const { state } = await boot(BACK, backWithAttempt());
+    // default: never touches tags, never asks, no button
+    const { state, doc } = await boot(BACK, backWithAttempt());
     await wait(400);
-    ok("off by default: no prompt", !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("off by default: no question", !asked(state));
+    ok("off by default: no remember button", !doc.getElementById("av-keep"));
     ok("off by default: tags are never even read", state.tagReads === 0 && state.added.length === 0);
-    ok("off by default: it goes straight to the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
   }
   {
-    const { win, state } = await boot(BACK,
-      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true }, tags: ["leech"] }));
+    // THE v36 REGRESSION: nothing is asked before you have graded
+    const { state } = await boot(BACK, backWithAttempt({ cfg: ON }));
     await wait(400);
-    ok("the offer comes BEFORE grading, not after a spoken grade",
-       state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
-    ok("so it does not depend on how you grade", !state.spoken.some((t) => t.indexOf("Mark it") >= 0));
-    ok("and it no longer tells you to say yes or no",
-       !state.spoken.some((t) => t.indexOf("Say yes") >= 0 || t.indexOf("say yes") >= 0));
-
+    ok("no question before grading (v36 asked about every wrong answer)", !asked(state));
+    ok("it goes straight to the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
+  }
+  {
+    // voice grader, positive grade -> asked, then graded
+    const { win, state, doc } = await boot(BACK, backWithAttempt({ cfg: ON, tags: ["leech"] }));
+    await wait(400);
+    win.ankiSttResult(heard("good"));
+    await wait(400);
+    ok("a spoken Good is followed by the question", asked(state));
+    ok("the question no longer says 'say yes or no'",
+       !state.spoken.some((t) => /say yes/i.test(t)));
+    ok("grading waits for the answer", state.graded.length === 0);
     win.ankiSttResult(heard("yes"));
     await wait(400);
     ok("yes adds one tag", state.added.length === 1);
@@ -320,70 +341,144 @@ const silence = () => JSON.stringify({ success: false, value: "No speech input" 
     ok("it uses the additive call, never a wholesale rewrite", state.tagWrites.length === 0);
     ok("existing tags are untouched", state.tags.indexOf("leech") >= 0);
     ok("it confirms out loud", state.spoken.indexOf("Saved.") >= 0);
-    ok("then it asks for the grade as usual", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
-    ok("and grading still works afterwards", state.graded.length === 0);
-    win.ankiSttResult(heard("good"));
-    await wait(400);
-    ok("the card grades normally", state.graded[0] === 3);
+    ok("then grades Good", state.graded[0] === 3);
+    ok("and the on-screen button agrees", doc.getElementById("av-keep").textContent.indexOf("Remembered") >= 0);
   }
   {
-    const { win, state } = await boot(BACK,
-      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
+    // a spoken Again means you were wrong: never asked
+    const { win, state } = await boot(BACK, backWithAttempt({ cfg: ON }));
+    await wait(400);
+    win.ankiSttResult(heard("again"));
+    await wait(400);
+    ok("Again is never followed by the question", !asked(state));
+    ok("Again just grades", state.graded[0] === 1);
+  }
+  {
+    const { win, state } = await boot(BACK, backWithAttempt({ cfg: ON }));
+    await wait(400);
+    win.ankiSttResult(heard("hard"));
     await wait(400);
     win.ankiSttResult(heard("no"));
     await wait(400);
-    ok("no writes nothing", state.added.length === 0 && state.tagWrites.length === 0);
-    ok("but still reaches the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
+    ok("no saves nothing", state.added.length === 0 && state.tagWrites.length === 0);
+    ok("but still grades", state.graded[0] === 2);
   }
   {
-    // silence at the prompt must not strand the card
-    const { win, state } = await boot(BACK,
-      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true } }));
+    // silence at the question must not strand a card that was already graded
+    const { win, state } = await boot(BACK, backWithAttempt({ cfg: ON }));
+    await wait(400);
+    win.ankiSttResult(heard("easy"));
     await wait(400);
     win.ankiSttResult(silence());
     await wait(400);
-    ok("no reply still reaches the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
+    ok("no reply still grades the card", state.graded[0] === 4);
     ok("and saves nothing", state.added.length === 0);
-    win.ankiSttResult(heard("easy"));
-    await wait(400);
-    ok("and the card can still be graded", state.graded[0] === 4);
   }
   {
-    // a recognised answer is never offered - there is nothing to teach
-    const { state } = await boot(BACK, {
-      onAnswer: true,
-      cfg: { detectAnswer: true, rememberAnswers: true },
-      storage: {
-        av_qlines: JSON.stringify(["Which book?"]),
-        av_attempt: JSON.stringify(["bamako"]),
-        av_adone: "1",
-      },
+    // button grader: our own button, silent, no question at all
+    const { win, state, doc } = await boot(BACK, backWithAttempt({ cfg: ON }));
+    await wait(400);
+    const btn = doc.getElementById("av-keep");
+    ok("an unrecognised answer gets a remember button", !!btn && btn.style.display === "block");
+    ok("the button names the phrase", btn.textContent.indexOf("the goblet of fire") >= 0);
+    ok("the button is never read aloud", btn.id.indexOf("av-") === 0);
+    tap(win, btn);
+    await wait(100);
+    ok("tapping it saves the tag", state.added.length === 1);
+    ok("silently - no spoken question", !asked(state));
+    ok("the button confirms", btn.textContent.indexOf("Remembered") >= 0);
+    tap(win, btn);
+    await wait(100);
+    ok("a second tap does not save twice", state.added.length === 1);
+    // having tapped it, a spoken grade must not ask again
+    win.ankiSttResult(heard("good"));
+    await wait(400);
+    ok("no question after the button was used", !asked(state));
+    ok("the card grades straight away", state.graded[0] === 3);
+  }
+  {
+    // a recognised answer has nothing to teach: no button, no question
+    const { win, state, doc } = await boot(BACK, {
+      onAnswer: true, cfg: ON,
+      storage: { av_qlines: JSON.stringify(["Which book?"]), av_attempt: JSON.stringify(["bamako"]), av_adone: "1" },
     });
     await wait(400);
-    ok("a matched answer is never offered for saving",
-       !state.spoken.some((t) => t.indexOf("Should I remember") >= 0));
+    ok("a matched answer gets no remember button", !doc.getElementById("av-keep"));
     ok("it just says Correct", state.spoken.indexOf("Correct.") >= 0);
   }
   {
     // a tag saved earlier makes the same answer count next time
     const { state } = await boot(BACK,
-      backWithAttempt({
-        cfg: { detectAnswer: true, rememberAnswers: true },
-        tags: ["AnkiVoice::ok::the-goblet-of-fire"],
-      }));
+      backWithAttempt({ cfg: ON, tags: ["AnkiVoice::ok::the-goblet-of-fire"] }));
     await wait(400);
     ok("a remembered answer is accepted on the next review", state.spoken.indexOf("Correct.") >= 0);
     ok("and auto-grades Good", state.graded[0] === 3);
   }
   {
-    // a broken tag read must never lead to a write
-    const { win, state } = await boot(BACK,
-      backWithAttempt({ cfg: { detectAnswer: true, rememberAnswers: true }, tagsBroken: true }));
+    // the additive call never needs to READ tags, so a broken read can't hurt it
+    const { win, state, doc } = await boot(BACK, backWithAttempt({ cfg: ON, tagsBroken: true }));
     await wait(400);
-    win.ankiSttResult(heard("yes"));
+    tap(win, doc.getElementById("av-keep"));
+    await wait(150);
+    ok("with the additive call, a broken read still saves safely", state.added.length === 1);
+    ok("...without ever rewriting the tag list", state.tagWrites.length === 0);
+  }
+  {
+    // no additive call AND a broken read: the replace-all fallback must refuse
+    const { win, state, doc } = await boot(BACK,
+      backWithAttempt({ cfg: ON, tagsBroken: true, noAddTag: true }));
     await wait(400);
-    ok("a failed tag read never rewrites tags", state.tagWrites.length === 0);
-    ok("and it still reaches the grade cue", state.spoken.some((t) => t.indexOf("Mark it") >= 0));
+    tap(win, doc.getElementById("av-keep"));
+    await wait(150);
+    ok("a failed read never leads to a rewrite", state.tagWrites.length === 0);
+    ok("the button owns up to the failure", doc.getElementById("av-keep").textContent.indexOf("Could not save") >= 0);
+  }
+  {
+    // no additive call but a GOOD read: the fallback keeps every existing tag
+    const { win, state, doc } = await boot(BACK,
+      backWithAttempt({ cfg: ON, noAddTag: true, tags: ["leech", "geo"] }));
+    await wait(400);
+    tap(win, doc.getElementById("av-keep"));
+    await wait(150);
+    ok("the fallback rewrites exactly once", state.tagWrites.length === 1);
+    ok("...keeping every existing tag", ["leech", "geo"].every((t) => state.tagWrites[0].indexOf(t) >= 0));
+    ok("...plus the new one", state.tagWrites[0].indexOf("AnkiVoice::ok::the-goblet-of-fire") >= 0);
+  }
+
+  // ---------- saved settings no longer freeze old defaults (v37) ----------
+  {
+    // the reported case: settings saved back on v30 dumped maxAnswerWords: 3
+    const legacy = { thinkDelayQuestionMs: 0, markMicDelayMs: 0, restartGapMs: 0,
+                     detectAnswer: true, maxAnswerWords: 3, voiceTest: true };
+    const { win, state, doc } = await boot("<div>In morse code, what is:</div><div>end of work</div>",
+      { legacyCfg: legacy });
+    win.ankiSttResult(heard("it is the end of work"));   // 6 words
+    await wait(80);
+    ok("a stale saved limit of 3 no longer blocks a 6-word answer", state.showAnswer === 1);
+    ok("...so no 'too long' complaint", doc.getElementById("av-heard").textContent.indexOf("too long") < 0);
+  }
+  {
+    // ...but a real choice saved in the new format is respected
+    const { win, state, doc } = await boot("<div>Q</div>",
+      { cfg: { detectAnswer: true, maxAnswerWords: 3 } });
+    win.ankiSttResult(heard("it is the end of work"));
+    await wait(80);
+    ok("a deliberately saved 3 still applies", state.showAnswer === 0);
+    ok("and says so", doc.getElementById("av-heard").textContent.indexOf("max 3") >= 0);
+  }
+  {
+    // saving writes only what differs from the defaults
+    const { win, doc } = await boot("<div>Q</div>", { cfg: { voiceTest: false } });
+    tap(win, doc.getElementById("av-gear"));
+    await wait(20);
+    const row = [...doc.getElementById("av-settings").querySelectorAll("div")]
+      .find((d) => d.firstChild && d.firstChild.textContent === "Voice test (show heard words)");
+    tap(win, row.querySelector("button"));                // turn Voice test on
+    await wait(20);
+    const saved = JSON.parse(win.localStorage.getItem("av_cfg"));
+    ok("the saved blob is marked current-format", saved._cfgv === 2);
+    ok("the changed setting is saved", saved.voiceTest === true);
+    ok("untouched defaults are NOT saved", !("maxAnswerWords" in saved) && !("words_hard" in saved));
   }
 
   // ---------- adding vocabulary survives a restart, and says so when empty ----

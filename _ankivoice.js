@@ -3,11 +3,22 @@
    FILE: _ankivoice.js  -- filename is STABLE; never rename it. To update, replace
    THIS FILE'S CONTENTS in collection.media (desktop) and sync. Versions below.
 
-   VERSION: 36
+   VERSION: 38
 
    SETTINGS: see the CFG block below.
 
    CHANGELOG:
+     v38 - spelling differences no longer make a right answer wrong: doubled
+           letters (Elliott/Elliot) and British/American spellings
+           (colour/color, theatre/theater) now match. One letter swapped for
+           another still does not, so Gambia/Zambia and Iran/Iraq stay wrong.
+     v37 - "Remember answers" no longer asks about wrong answers: voice
+           graders are asked only after a spoken Hard/Good/Easy, and button
+           graders get a silent "I was right - remember" button instead of a
+           question (v36 asked before grading, i.e. about every wrong
+           answer). Also: settings are saved sparsely, so improved defaults
+           reach people who saved settings before - the answer word limit
+           had stayed frozen at 3 for them after its default became 8.
      v36 - the offer to remember an unrecognised answer now comes BEFORE the
            grading cue, so it appears whether you grade by voice or by tapping
            the buttons (the buttons are native Android UI the card cannot see,
@@ -133,7 +144,7 @@
   // Must match the VERSION in the header comment above; a test asserts they agree.
   // The point is to be able to tell, on the phone, which script is actually
   // running - media-name collisions make that genuinely ambiguous otherwise.
-  var AV_VERSION = 36;
+  var AV_VERSION = 38;
 
   // ---------------- settings ----------------
   var CFG = {
@@ -172,12 +183,27 @@
     words_no:     "no, nope, nah, negative, don t, do not, never"
   };
   var CFG_DEFAULTS = {}; for (var _dk in CFG) CFG_DEFAULTS[_dk] = CFG[_dk];
+  // Defaults that have since changed: setting -> the value(s) it used to default
+  // to. Only consulted for settings saved before v37 (see below).
+  var AV_OLD_DEFAULTS = { maxAnswerWords: [3] };
   try {
     var _raw = null;
     try { var _cm = document.cookie.match(/(?:^|; )av_cfg=([^;]*)/); if (_cm) _raw = decodeURIComponent(_cm[1]); } catch (_ce) {}
     if (!_raw) { try { _raw = localStorage.getItem("av_cfg"); } catch (_le) {} }
     var _sv = JSON.parse(_raw || "{}");
-    for (var _sk in _sv) if (CFG.hasOwnProperty(_sk)) CFG[_sk] = _sv[_sk];
+    // Before v37, saving settings wrote EVERY value, defaults included - so a
+    // default improved later never reached anyone who had saved even once (the
+    // spoken-answer word limit stayed at 3 after its default became 8). Those
+    // legacy blobs carry no _cfgv marker; in them, a value equal to a known OLD
+    // default is taken to be that stale default rather than a choice, and is
+    // dropped so the current default applies.
+    var _legacy = !_sv || !_sv._cfgv;
+    for (var _sk in _sv) {
+      if (!CFG.hasOwnProperty(_sk)) continue;
+      var _old = AV_OLD_DEFAULTS[_sk];
+      if (_legacy && _old && _old.indexOf(_sv[_sk]) >= 0) continue;
+      CFG[_sk] = _sv[_sk];
+    }
     for (var _wk in CFG_DEFAULTS) if (_wk.indexOf("words_") === 0 && !String(CFG[_wk] || "").trim()) CFG[_wk] = CFG_DEFAULTS[_wk];
   } catch (_e) {}
   // -------------------------------------------
@@ -242,6 +268,10 @@
 
   var api = null;
   var paused = false;
+  // The unrecognised answer on this card, and whether it has been saved. Page-
+  // level rather than per-flow so the on-screen button and the voice question
+  // agree, and a resumed flow (after the settings panel) still knows about it.
+  var unmatched = "", kept = false;
 
   // ---------------- keep screen awake (only while active) ----------------
   var wakeLock = null, awake = false, keepVid = null;
@@ -366,11 +396,29 @@
     their:1, them:1, they:1, this:1, to:1, was:1, we:1, were:1, with:1, you:1,
     your:1
   };
+  // Spelling differences that do not change the spoken word. The recognizer has
+  // to pick ONE spelling - American for en-US, and an arbitrary one for names -
+  // so "Billy Elliott" was never going to match a card saying "Billy Elliot".
+  // Deliberately narrow, and deliberately NOT edit distance: in a geography deck
+  // the classic wrong answers are one letter from the right ones (Gambia/Zambia,
+  // Iceland/Ireland, Iran/Iraq, Mali/Bali), exactly as close as Elliott/Elliot,
+  // and a false match here silently grades a wrong answer Good. So only doubled
+  // letters and British/American spellings are forgiven; swapping one letter for
+  // another never is. Applied to both sides, so it only has to be consistent.
+  function spellKey(w) {
+    if (w === "grey") w = "gray";
+    if (w.length >= 6) w = w.replace(/our$/, "or");                            // colour -> color
+    if (w.length >= 5) w = w.replace(/([^aeiou])re$/, "$1er");                 // theatre -> theater
+    if (w.length >= 6) w = w.replace(/is(e|ed|es|ing|ation|ations)$/, "iz$1"); // realise -> realize
+    if (w.length >= 7) w = w.replace(/ogue$/, "og");                           // catalogue -> catalog
+    if (w.length >= 8) w = w.replace(/mme$/, "m");                             // programme -> program
+    return w.replace(/([a-z])\1+/g, "$1");                                    // elliott -> eliot
+  }
   function contentWords(s) {
     var raw = normalize(s).split(" "), out = [], i;
-    for (i = 0; i < raw.length; i++) if (raw[i] && !AV_STOPWORDS[raw[i]]) out.push(raw[i]);
+    for (i = 0; i < raw.length; i++) if (raw[i] && !AV_STOPWORDS[raw[i]]) out.push(spellKey(raw[i]));
     // An answer that is nothing but filler ("the") still has to be matchable.
-    if (!out.length) for (i = 0; i < raw.length; i++) if (raw[i]) out.push(raw[i]);
+    if (!out.length) for (i = 0; i < raw.length; i++) if (raw[i]) out.push(spellKey(raw[i]));
     return out;
   }
   function hasAll(hay, needles) {
@@ -621,6 +669,56 @@
     } catch (e) { return false; }
   }
 
+  // AnkiDroid's grade buttons are native Android UI outside this WebView, and the
+  // JS API has no callback for them, so the card can never learn that someone
+  // tapped Good - let alone ask them anything afterwards. So button graders get a
+  // button of OUR OWN: tap it if you were right, then grade as usual. It is
+  // silent, so a wrong answer costs nothing; you simply don't tap it. (v36 asked
+  // out loud before grading instead, which meant being asked about every wrong
+  // answer - worse than useless.)
+  var keepBtn = null;
+  function markKept(ok) {
+    if (!keepBtn) return;
+    keepBtn.textContent = ok ? "\u2713 Remembered \u2014 now grade the card"
+                             : "Could not save \u2014 tap to try again";
+    keepBtn.style.background = ok ? "#1b5e20" : "#8d6e63";
+  }
+  function offerKeep(phrase) {
+    if (!phrase) return;
+    if (!keepBtn) {
+      keepBtn = document.createElement("div");
+      keepBtn.id = "av-keep";                      // av-* ids are never read aloud
+      keepBtn.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);z-index:10002;" +
+        "max-width:92%;box-sizing:border-box;padding:11px 18px;border-radius:22px;" +
+        "background:#2e7d32;color:#fff;font-size:15px;font-weight:600;text-align:center;" +
+        "box-shadow:0 2px 8px rgba(0,0,0,.45);cursor:pointer;" +
+        "user-select:none;-webkit-user-select:none;";
+      keepBtn.addEventListener("touchstart", function (e) { e.stopPropagation(); }, { passive: true });
+      (document.body || document.documentElement).appendChild(keepBtn);
+    }
+    keepBtn.textContent = "\u2713 I was right \u2014 remember \u201C" + phrase + "\u201D";
+    keepBtn.style.background = "#2e7d32";
+    keepBtn.style.display = "block";
+    // Sit just above the "you said" readout, or the bar if that is hidden.
+    var base = (heardBar.style.display === "block") ? heardBar : stat;
+    var b = parseInt(base.style.bottom || "0", 10) || 0;
+    keepBtn.style.bottom = (b + (base.offsetHeight || 48) + 10) + "px";
+    keepBtn.onclick = async function (e) {
+      e.stopPropagation();
+      if (kept) return;
+      kept = true;
+      keepBtn.textContent = "Saving\u2026";
+      var ok = await rememberAnswer(api, phrase);
+      if (!ok) kept = false;
+      markKept(ok);
+      try {
+        if (ok && api && typeof api.ankiShowToast === "function") {
+          api.ankiShowToast("AnkiVoice: remembered \u201C" + phrase + "\u201D");
+        }
+      } catch (x) {}
+    };
+  }
+
   // ---------------- per-card flow ----------------
   // resume === true: the current side has already been read aloud (the user tapped
   // to un-pause, or closed the settings panel), so go straight to the microphone
@@ -630,7 +728,7 @@
     var myGen = ++window.__avGen;
     function dead() { return myGen !== window.__avGen; }
     var mainText = "", onAnswer = false, tries = 0, noMatch = 0, listening = false;
-    var unmatched = "", askingRemember = false;   // an answer we could offer to remember
+    var pendingGrade = null;   // a positive spoken grade, held while we ask about remembering
 
     try { if (api) api.ankiSttStop(); } catch (e) {}   // stop any mic left over from a previous flow
 
@@ -685,6 +783,17 @@
     // "Again" means you got it wrong, so there is nothing worth remembering.
     // Speak the grading cue and open the microphone. Split out because the
     // "remember this answer?" round now runs before it.
+    // Voice graders are asked AFTER a positive spoken grade, and only then: Again
+    // means you were wrong, so there is nothing to remember and nothing to ask.
+    async function maybeRemember(ease, label) {
+      if (!CFG.rememberAnswers || !unmatched || kept || ease === 1) return grade(ease, label);
+      pendingGrade = { ease: ease, label: label };
+      S("Remember \"" + unmatched + "\"?");
+      await speak("Should I remember, " + unmatched + ", as a right answer for this card?");
+      if (dead()) return;
+      return listen();
+    }
+
     async function gradeCue() {
       var aDone = lsGet("av_adone") === "1";
       lsSet("av_adone", "1");
@@ -730,9 +839,9 @@
           await speak("Microphone permission is missing.");
           return;
         }
-        if (askingRemember) {                          // no reply to "remember this?"
-          askingRemember = false;
-          return gradeCue();
+        if (pendingGrade) {                            // no reply to "remember this?"
+          var pgs = pendingGrade; pendingGrade = null;
+          return grade(pgs.ease, pgs.label);           // never strand a graded card
         }
         if (++tries >= CFG.maxListenTries) return pauseMic("silence");
         await sleep(CFG.restartGapMs);
@@ -749,17 +858,20 @@
       if (CFG.voiceTest) showHeard("heard:  " + hyps.join("   |   "));   // show, but keep working normally
       S("heard: " + (hyps[0] || ""));   // full list goes to the voice-test bar
       var matched = function (key) { if (!said(hyps, key)) return false; noMatch = 0; return true; };
-      if (askingRemember) {
-        // Answering the "should I remember this?" prompt. Anything that is not a
-        // clear yes just moves on - never leave the card hanging on a mishear.
-        askingRemember = false;
+      if (pendingGrade) {
+        // Answering "should I remember this?". Anything but a clear yes just
+        // grades the card - never leave it hanging on a mishear.
+        var pg = pendingGrade; pendingGrade = null;
         if (said(hyps, "yes")) {
+          kept = true;
           var saved = await rememberAnswer(api, unmatched);
+          if (!saved) kept = false;
+          markKept(saved);
           if (dead()) return;
           await speak(saved ? "Saved." : "Sorry, I could not save that.");
           if (dead()) return;
         }
-        return gradeCue();
+        return grade(pg.ease, pg.label);
       }
       if (matched("stop")) { paused = true; letSleep(); S("Paused \u2014 tap to listen again"); return; }
       if (matched("off")) { lsSet("av_on", "0"); stopFlow(); paintOff(); try { if (api) api.ankiTtsSpeak("Voice off."); } catch (e) {} return; }
@@ -793,10 +905,10 @@
       } else {
         // Grade words are only matched on the answer side, so these homophones are
         // safe: they're what the recognizer tends to hear for the intended grade.
-        if (matched("easy")) return grade(4, "easy");
-        if (matched("hard")) return grade(2, "hard");
+        if (matched("easy")) return maybeRemember(4, "easy");
+        if (matched("hard")) return maybeRemember(2, "hard");
         if (matched("again")) return grade(1, "again");
-        if (matched("good")) return grade(3, "good");
+        if (matched("good")) return maybeRemember(3, "good");
       }
       // Heard something, recognised nothing. A television or a conversation in the
       // room produces these indefinitely, so they must count towards the auto-pause
@@ -871,17 +983,7 @@
             }
             await speak(mainText);                                // read the answer
             if (dead()) return;
-            if (CFG.rememberAnswers && unmatched) {
-              // Asked before the grade, deliberately. The answer buttons are
-              // native Android UI outside the WebView, so the card cannot tell
-              // whether - or how - you tapped. Waiting for a SPOKEN grade meant
-              // the offer never appeared for anyone using the buttons.
-              askingRemember = true;
-              S("Remember \"" + unmatched + "\"?");
-              await speak("Should I remember, " + unmatched + ", as a right answer for this card?");
-              if (dead()) return;
-              return listen();                                    // continues in gradeCue()
-            }
+            if (CFG.rememberAnswers && unmatched) offerKeep(unmatched);   // for button graders
             return gradeCue();
           }
         }
@@ -964,9 +1066,15 @@
     panelNote.textContent = msg || "";
     panelNote.style.display = msg ? "block" : "none";
   }
+  // Save only what differs from the defaults, plus a format marker, so a default
+  // improved in a later version still reaches people who have saved settings
+  // before. (It also keeps the cookie well inside its ~4 KB.)
   function cfgJson() {
-    var out = {};
-    for (var i = 0; i < AV_SETTINGS.length; i++) out[AV_SETTINGS[i].k] = CFG[AV_SETTINGS[i].k];
+    var out = { _cfgv: 2 };
+    for (var i = 0; i < AV_SETTINGS.length; i++) {
+      var k = AV_SETTINGS[i].k;
+      if (CFG[k] !== CFG_DEFAULTS[k]) out[k] = CFG[k];
+    }
     return JSON.stringify(out);
   }
   // Silently overflowing the cookie means the settings quietly revert on the next

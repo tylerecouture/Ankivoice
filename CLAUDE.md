@@ -124,6 +124,12 @@ answer → say "Mark it" → short delay → listen → a grade word calls
   Never join them before matching — that was a real, long-lived bug.
 - The handler is `async`, so **anything it throws vanishes** into an unhandled
   rejection and the mic never reopens. Guard every parse.
+- **Never let a default get saved.** `cfgJson` stores only non-default values.
+  If you change a default, add the old value to `AV_OLD_DEFAULTS`, or everyone who
+  saved settings on the old version keeps the old value.
+- The grade **buttons are invisible to card JS** (native UI, no callback). Anything
+  that must react to "the user graded this" works for voice grades only, unless
+  it gives button users their own on-page control (see `offerKeep`).
 - The reviewer's CSS sets `user-select:none` on the card body, which appears to
   block the **on-screen keyboard** in our settings inputs. Word lists must stay
   editable without typing (the chip UI).
